@@ -1,0 +1,17 @@
+# Model configuration
+gnn_type: gin
+hidden_channels: 64
+num_layers: 3
+dropout: 0.5
+
+# Training configuration
+lr: 0.001
+epochs: 100
+batch_size: 32
+
+# Dataset configuration
+dataset: good_bbbp
+
+# System configuration
+device: cuda
+seed: 42 
