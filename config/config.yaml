@@ -4,7 +4,7 @@
 experiment:
   name: "baseline_gnn"
   seed: 42
-  device: "cpu"  # or "cpu"
+  device: "cuda"  # or "cpu"
   debug:
     enable: false
     num_samples: 50
