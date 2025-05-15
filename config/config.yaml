@@ -1,0 +1,49 @@
+# Main configuration file for GNN experiments
+
+# Experiment settings
+experiment:
+  name: "baseline_gnn"
+  seed: 42
+  device: "cpu"  # or "cpu"
+  debug:
+    enable: false
+    num_samples: 50
+    epochs: 5
+
+# Dataset configuration
+dataset:
+  name: "TUDataset"  # Using a simple PyG dataset
+  dataset_name: "PROTEINS"  # Specific dataset from TUDataset
+  path: "./datasets"
+  batch_size: 32
+  num_workers: 4
+  split:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+
+# Model configuration
+model:
+  type: "GIN"  # Options: GIN, GCN, GraphSAGE
+  hidden_dim: 64
+  num_layers: 3
+  dropout: 0.5
+  pooling: "mean"  # Options: mean, sum, max
+
+# Training configuration
+training:
+  epochs: 100
+  lr: 0.001
+  weight_decay: 0.0001
+  early_stopping:
+    patience: 10
+    min_delta: 0.001
+
+# Logging configuration
+logging:
+  wandb:
+    enable: true
+    project: "graph_moe_ood"
+    entity: "jhsun163-university-of-toronto"
+  log_interval: 10
+  save_model: true 
