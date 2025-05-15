@@ -5,12 +5,17 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
 from sklearn.metrics import accuracy_score, roc_auc_score
+import sys
+
+# Add GOOD to path if it exists
+if os.path.exists('GOOD'):
+    sys.path.append('GOOD')
 
 # Import the GOOD dataset
 try:
-    from good_datasets import get_dataset
+    from GOOD import dataset_loader
 except ImportError:
-    raise ImportError("Please install the GOOD benchmark: pip install good-benchmark")
+    raise ImportError("Please run 'python setup.py install' to install the GOOD benchmark")
 
 # Import our GNN model
 from gnn import GNN
@@ -36,6 +41,23 @@ def load_config(config_path):
         with open(config_path, 'r') as f:
             return yaml.safe_load(f)
     return {}
+
+def get_dataset(config):
+    """Load dataset from GOOD benchmark"""
+    dataset_name = config['dataset']['name']
+    domain = config['dataset']['domain']
+    shift = config['dataset']['shift']
+    generate = config['dataset'].get('generate', False)
+    
+    # Load dataset using GOOD's loader
+    dataset = dataset_loader.load_dataset(
+        dataset_name=dataset_name,
+        domain=domain,
+        shift=shift,
+        generate=generate
+    )
+    
+    return dataset
 
 def train(model, loader, optimizer, device):
     model.train()
@@ -107,14 +129,19 @@ def main():
     torch.manual_seed(config['seed'])
     device = torch.device(config['device'] if torch.cuda.is_available() else 'cpu')
     
+    # Create directories
+    os.makedirs(config['log_dir'], exist_ok=True)
+    os.makedirs(config['checkpoint_dir'], exist_ok=True)
+    os.makedirs(config['results_dir'], exist_ok=True)
+    
     # Load dataset
-    dataset = get_dataset(name=config['dataset'])
+    dataset = get_dataset(config)
     
     # Get train/val/test splits
-    train_dataset = dataset.get_subset('train')
-    val_dataset = dataset.get_subset('val')
-    id_test_dataset = dataset.get_subset('id_test')
-    ood_test_dataset = dataset.get_subset('ood_test')
+    train_dataset = dataset.data.train
+    val_dataset = dataset.data.val
+    id_test_dataset = dataset.data.id_test
+    ood_test_dataset = dataset.data.ood_test
     
     # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True)
