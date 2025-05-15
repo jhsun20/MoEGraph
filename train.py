@@ -7,15 +7,16 @@ from torch_geometric.loader import DataLoader
 from sklearn.metrics import accuracy_score, roc_auc_score
 import sys
 
-# Add GOOD to path if it exists
-if os.path.exists('GOOD'):
-    sys.path.append('GOOD')
+# Add project root to path if needed
+if os.path.exists('datasets'):
+    sys.path.append('.')
 
-# Import the GOOD dataset
+# Import the GOOD dataset loader
 try:
-    from GOOD import dataset_loader
+    from datasets.good_loader import load_good_dataset
+    from datasets.config import cfg  # Import config with shift_type and seed
 except ImportError:
-    raise ImportError("Please run 'python setup.py install' to install the GOOD benchmark")
+    raise ImportError("Please ensure the GOOD benchmark and loader are properly installed")
 
 # Import our GNN model
 from gnn import GNN
@@ -23,7 +24,8 @@ from gnn import GNN
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a GNN for graph classification')
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
-    parser.add_argument('--dataset', type=str, default='good_bbbp', help='Dataset name')
+    parser.add_argument('--dataset', type=str, default='GOODbbbp', help='Dataset name (must start with GOOD)')
+    parser.add_argument('--data_root', type=str, default='./data', help='Path to data directory')
     parser.add_argument('--gnn_type', type=str, default='gin', help='GNN type (gin, gcn, sage)')
     parser.add_argument('--hidden_channels', type=int, default=64, help='Hidden channels')
     parser.add_argument('--num_layers', type=int, default=3, help='Number of GNN layers')
@@ -39,25 +41,9 @@ def load_config(config_path):
     """Load configuration from YAML file"""
     if os.path.exists(config_path):
         with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
+            config = yaml.safe_load(f)
+        return config
     return {}
-
-def get_dataset(config):
-    """Load dataset from GOOD benchmark"""
-    dataset_name = config['dataset']['name']
-    domain = config['dataset']['domain']
-    shift = config['dataset']['shift']
-    generate = config['dataset'].get('generate', False)
-    
-    # Load dataset using GOOD's loader
-    dataset = dataset_loader.load_dataset(
-        dataset_name=dataset_name,
-        domain=domain,
-        shift=shift,
-        generate=generate
-    )
-    
-    return dataset
 
 def train(model, loader, optimizer, device):
     model.train()
@@ -130,50 +116,68 @@ def main():
     device = torch.device(config['device'] if torch.cuda.is_available() else 'cpu')
     
     # Create directories
-    os.makedirs(config['log_dir'], exist_ok=True)
-    os.makedirs(config['checkpoint_dir'], exist_ok=True)
-    os.makedirs(config['results_dir'], exist_ok=True)
+    os.makedirs(config.get('log_dir', 'logs'), exist_ok=True)
+    os.makedirs(config.get('checkpoint_dir', 'checkpoints'), exist_ok=True)
+    os.makedirs(config.get('results_dir', 'results'), exist_ok=True)
     
-    # Load dataset
-    dataset = get_dataset(config)
+    # Load dataset using the imported function
+    dataset_name = config.get('dataset', 'GOODbbbp')
+    data_root = config.get('data_root', './data')
+    
+    # Set shift type in config if specified
+    if 'shift_type' in config:
+        cfg.dataset.shift_type = config['shift_type']
+    
+    # Load the dataset using the imported function
+    datasets = load_good_dataset(dataset_name, data_root)
     
     # Get train/val/test splits
-    train_dataset = dataset.data.train
-    val_dataset = dataset.data.val
-    id_test_dataset = dataset.data.id_test
-    ood_test_dataset = dataset.data.ood_test
+    train_dataset = datasets.get('train')
+    val_dataset = datasets.get('val')
+    id_test_dataset = datasets.get('id_test', datasets.get('test'))  # Fallback to 'test' if 'id_test' not available
+    ood_test_dataset = datasets.get('ood_test')
     
     # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config['batch_size'])
-    id_test_loader = DataLoader(id_test_dataset, batch_size=config['batch_size'])
-    ood_test_loader = DataLoader(ood_test_dataset, batch_size=config['batch_size'])
+    batch_size = config.get('batch_size', 32)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True) if train_dataset else None
+    val_loader = DataLoader(val_dataset, batch_size=batch_size) if val_dataset else None
+    id_test_loader = DataLoader(id_test_dataset, batch_size=batch_size) if id_test_dataset else None
+    ood_test_loader = DataLoader(ood_test_dataset, batch_size=batch_size) if ood_test_dataset else None
     
     # Determine input and output dimensions
-    in_channels = dataset[0].x.size(1)
-    if dataset.task_type == 'classification':
-        out_channels = dataset.num_classes
-        is_binary = (out_channels == 1)
-    else:  # regression
+    in_channels = train_dataset.data.x.size(1) if train_dataset and hasattr(train_dataset.data, 'x') else 0
+    
+    # Determine task type and number of classes
+    task = datasets.get('task', 'classification')
+    is_binary = task == 'Binary classification'
+    is_regression = task == 'Regression'
+    
+    if is_regression:
         out_channels = 1
         is_binary = False
+    else:
+        out_channels = train_dataset.n_classes if hasattr(train_dataset, 'n_classes') else 1
+        is_binary = (out_channels == 1)
     
     # Create model
     model = GNN(
         in_channels=in_channels,
-        hidden_channels=config['hidden_channels'],
+        hidden_channels=config.get('hidden_channels', 64),
         out_channels=out_channels,
-        num_layers=config['num_layers'],
-        dropout=config['dropout'],
-        gnn_type=config['gnn_type']
+        num_layers=config.get('num_layers', 3),
+        dropout=config.get('dropout', 0.5),
+        gnn_type=config.get('gnn_type', 'gin')
     ).to(device)
     
     # Create optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'])
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.get('lr', 0.001))
     
     # Training loop
     best_val_acc = 0
-    for epoch in range(1, config['epochs'] + 1):
+    checkpoint_dir = config.get('checkpoint_dir', 'checkpoints')
+    checkpoint_path = os.path.join(checkpoint_dir, f"{dataset_name}_{config.get('gnn_type', 'gin')}_best.pt")
+    
+    for epoch in range(1, config.get('epochs', 100) + 1):
         train_loss = train(model, train_loader, optimizer, device)
         val_acc, val_auc = evaluate(model, val_loader, device, is_binary)
         
@@ -186,15 +190,16 @@ def main():
         # Save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model.state_dict(), 'best_model.pt')
+            torch.save(model.state_dict(), checkpoint_path)
     
     # Load best model
-    model.load_state_dict(torch.load('best_model.pt'))
+    model.load_state_dict(torch.load(checkpoint_path))
     
     # Final evaluation
     id_test_acc, id_test_auc = evaluate(model, id_test_loader, device, is_binary)
     ood_test_acc, ood_test_auc = evaluate(model, ood_test_loader, device, is_binary)
     
+    # Print results
     print(f'ID Test Acc: {id_test_acc:.4f}')
     if id_test_auc is not None:
         print(f'ID Test AUC: {id_test_auc:.4f}')
@@ -202,6 +207,26 @@ def main():
     print(f'OOD Test Acc: {ood_test_acc:.4f}')
     if ood_test_auc is not None:
         print(f'OOD Test AUC: {ood_test_auc:.4f}')
+    
+    # Save results
+    results = {
+        'dataset': dataset_name,
+        'shift_type': cfg.dataset.shift_type,
+        'gnn_type': config.get('gnn_type', 'gin'),
+        'id_test_acc': id_test_acc,
+        'id_test_auc': id_test_auc,
+        'ood_test_acc': ood_test_acc,
+        'ood_test_auc': ood_test_auc
+    }
+    
+    results_dir = config.get('results_dir', 'results')
+    results_path = os.path.join(
+        results_dir,
+        f"{dataset_name}_{cfg.dataset.shift_type}_{config.get('gnn_type', 'gin')}.yaml"
+    )
+    
+    with open(results_path, 'w') as f:
+        yaml.dump(results, f)
 
 if __name__ == '__main__':
     main() 
