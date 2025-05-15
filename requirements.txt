@@ -1,28 +1,12 @@
-# Core dependencies
-torch==2.1.2
+torch==2.1.2+cu118
+torchvision==0.16.2+cu118
+torchaudio==2.1.2+cu118
+pyg-lib
+torch-scatter
+torch-sparse
+torch-cluster
+torch-spline-conv
 torch-geometric==2.4.0
-
-# Data processing and utilities
-# numpy>=1.20.0
-# pandas>=1.3.0
-# scikit-learn>=1.0.0
-# matplotlib>=3.4.0
-# seaborn>=0.11.0
-
-# Configuration management
+rdkit-pypi
 pyyaml
-# hydra-core>=1.1.0
-
-# Logging and experiment tracking
-# tensorboard>=2.8.0
 wandb
-
-# Utilities
-tqdm
-# networkx>=2.6.0
-
-# Testing
-# pytest>=6.2.5
-
-# Python version: 3.9
-# Add this as a comment since pip doesn't directly enforce Python version 
