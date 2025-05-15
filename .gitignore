@@ -1,0 +1,12 @@
+# Ignore all Markdown files...
+*.md
+
+# ...except README.md (case-insensitive)
+!README.md
+!readme.md
+
+# Ignore .cursorrules file
+.cursorrules
+
+# Ignore JetBrains IDE config
+.idea/
