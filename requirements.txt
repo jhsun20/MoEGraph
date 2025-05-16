@@ -6,7 +6,8 @@ torch-scatter
 torch-sparse
 torch-cluster
 torch-spline-conv
-torch-geometric==2.4.0
+torch-geometric==2.5.0
 rdkit-pypi
 pyyaml
 wandb
+numpy==1.26.3
