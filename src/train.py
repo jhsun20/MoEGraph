@@ -11,7 +11,7 @@ from models.model_factory import get_model
 from utils.logger import Logger
 from utils.metrics import compute_metrics
 
-def train_epoch(model, loader, optimizer, device):
+def train_epoch(model, loader, optimizer, dataset_info, device):
     """Train model for one epoch."""
     model.train()
     total_loss = 0
@@ -39,12 +39,12 @@ def train_epoch(model, loader, optimizer, device):
     avg_loss = total_loss / len(loader.dataset)
     all_outputs = torch.cat(all_outputs, dim=0)
     all_targets = torch.cat(all_targets, dim=0)
-    metrics = compute_metrics(all_outputs, all_targets)
+    metrics = compute_metrics(all_outputs, all_targets, dataset_info['metric'])
     metrics['loss'] = avg_loss
     
     return metrics
 
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, metric_type):
     """Evaluate model on validation or test set."""
     model.eval()
     total_loss = 0
@@ -68,7 +68,7 @@ def evaluate(model, loader, device):
     avg_loss = total_loss / len(loader.dataset)
     all_outputs = torch.cat(all_outputs, dim=0)
     all_targets = torch.cat(all_targets, dim=0)
-    metrics = compute_metrics(all_outputs, all_targets)
+    metrics = compute_metrics(all_outputs, all_targets, metric_type)
     metrics['loss'] = avg_loss
     
     return metrics
@@ -93,11 +93,14 @@ def train(config):
     logger.logger.info("Loading dataset...")
     data_loaders = load_dataset(config)
     train_loader = data_loaders['train_loader']
-    val_loader = data_loaders['val_loader']
-    test_loader = data_loaders['test_loader']
+    val_loader = data_loaders['val_loader']  # OOD validation
+    test_loader = data_loaders['test_loader']  # OOD test
+    id_val_loader = data_loaders['id_val_loader']  # In-distribution validation
+    id_test_loader = data_loaders['id_test_loader']  # In-distribution test
     dataset_info = data_loaders['dataset_info']
     
     logger.logger.info(f"Dataset info: {dataset_info}")
+    metric_type = dataset_info['metric']
     
     # Initialize model
     logger.logger.info(f"Initializing {config['model']['type']} model...")
@@ -121,18 +124,31 @@ def train(config):
     
     for epoch in range(1, num_epochs + 1):
         # Train
-        train_metrics = train_epoch(model, train_loader, optimizer, device)
+        train_metrics = train_epoch(model, train_loader, optimizer, dataset_info, device)
         
-        # Validate
-        val_metrics = evaluate(model, val_loader, device)
+        # Validate on OOD validation set
+        val_metrics = evaluate(model, val_loader, device, metric_type)
+        
+        # Validate on in-distribution validation set
+        id_val_metrics = evaluate(model, id_val_loader, device, metric_type)
         
         # Log metrics
         logger.log_metrics(train_metrics, epoch, phase="train")
-        logger.log_metrics(val_metrics, epoch, phase="val")
+        logger.log_metrics(val_metrics, epoch, phase="val_ood")
+        logger.log_metrics(id_val_metrics, epoch, phase="val_id")
         
-        # Early stopping
-        if val_metrics['accuracy'] > best_val_acc + config['training']['early_stopping']['min_delta']:
-            best_val_acc = val_metrics['accuracy']
+        # Early stopping based on OOD validation performance
+        # Use the appropriate metric for early stopping
+        primary_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
+        if primary_metric not in val_metrics:
+            primary_metric = list(val_metrics.keys())[0]  # Fallback to first metric
+            
+        current_metric = val_metrics[primary_metric]
+        # For error metrics like RMSE and MAE, lower is better
+        is_better = (current_metric < best_val_acc - config['training']['early_stopping']['min_delta']) if metric_type in ['RMSE', 'MAE'] else (current_metric > best_val_acc + config['training']['early_stopping']['min_delta'])
+        
+        if is_better:
+            best_val_acc = current_metric
             patience_counter = 0
             logger.save_model(model, epoch, val_metrics)
         else:
@@ -141,10 +157,13 @@ def train(config):
                 logger.logger.info(f"Early stopping at epoch {epoch}")
                 break
     
-    # Final evaluation on test set
-    logger.logger.info("Evaluating on test set...")
-    test_metrics = evaluate(model, test_loader, device)
-    logger.log_metrics(test_metrics, epoch, phase="test")
+    # Final evaluation on test sets
+    logger.logger.info("Evaluating on test sets...")
+    test_ood_metrics = evaluate(model, test_loader, device, metric_type)
+    test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
+    
+    logger.log_metrics(test_ood_metrics, epoch, phase="test_ood")
+    logger.log_metrics(test_id_metrics, epoch, phase="test_id")
     
     # Save results
     results_dir = os.path.join(
@@ -157,14 +176,19 @@ def train(config):
     with open(results_path, 'w') as f:
         yaml.dump({
             'train': train_metrics,
-            'val': val_metrics,
-            'test': test_metrics
+            'val_ood': val_metrics,
+            'val_id': id_val_metrics,
+            'test_ood': test_ood_metrics,
+            'test_id': test_id_metrics
         }, f)
     
     logger.logger.info(f"Results saved to {results_path}")
     logger.close()
     
-    return test_metrics
+    return {
+        'test_ood': test_ood_metrics,
+        'test_id': test_id_metrics
+    }
 
 if __name__ == "__main__":
     # Parse command line arguments

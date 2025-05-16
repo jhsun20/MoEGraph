@@ -11,3 +11,6 @@ rdkit-pypi
 pyyaml
 wandb
 numpy==1.26.3
+gdown
+munch
+dive-into-graphs

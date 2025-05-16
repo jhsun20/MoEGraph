@@ -4,23 +4,20 @@
 experiment:
   name: "baseline_gnn"
   seed: 42
-  device: "cuda"  # or "cpu"
+  device: "cpu"  # or "cpu"
   debug:
-    enable: false
-    num_samples: 50
+    enable: true
+    num_samples: 5
     epochs: 5
 
 # Dataset configuration
 dataset:
-  name: "TUDataset"  # Using a simple PyG dataset
-  dataset_name: "PROTEINS"  # Specific dataset from TUDataset
+  dataset_name: "GOODTwitter"  # Specific dataset from GOOD
+  task_type: "graph_classification"
   path: "./datasets"
+  shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 32
   num_workers: 4
-  split:
-    train: 0.8
-    val: 0.1
-    test: 0.1
 
 # Model configuration
 model:

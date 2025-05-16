@@ -22,3 +22,8 @@ checkpoints/
 logs/
 
 results/
+
+datasets/
+
+__pycache__/
+*.py[cod]
