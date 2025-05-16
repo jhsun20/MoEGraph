@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
+import argparse
 
 from data.dataset_loader import load_dataset
 from models.model_factory import get_model
@@ -166,9 +167,70 @@ def train(config):
     return test_metrics
 
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Train a GNN model with configurable parameters')
+    parser.add_argument('--config', type=str, default='config/config.yaml', 
+                        help='Path to the config file')
+    
+    # Model arguments
+    parser.add_argument('--model_type', type=str, help='Model type (GIN, GCN, GraphSAGE, etc.)')
+    parser.add_argument('--num_experts', type=int, help='Number of experts for MoE models')
+    
+    # Training arguments
+    parser.add_argument('--lr', type=float, help='Learning rate')
+    parser.add_argument('--weight_decay', type=float, help='Weight decay for optimizer')
+    parser.add_argument('--epochs', type=int, help='Number of training epochs')
+    parser.add_argument('--device', type=str, help='Device to use (cuda, cpu)')
+    parser.add_argument('--seed', type=int, help='Random seed for reproducibility')
+    
+    # Augmentation arguments
+    parser.add_argument('--augmentation', type=str, help='Enable or disable augmentation (true/false)')
+    parser.add_argument('--aug_strategy', type=str, help='Augmentation strategy')
+    parser.add_argument('--expert_specific_aug', type=str, help='Enable expert-specific augmentation (true/false)')
+    
+    # Gating arguments
+    parser.add_argument('--gating', type=str, help='Gating mechanism (soft_attention, learned_voting, etc.)')
+    
+    # Debug mode arguments
+    parser.add_argument('--debug', type=str, help='Enable debug mode (true/false)')
+    parser.add_argument('--debug_samples', type=int, help='Number of samples to use in debug mode')
+    parser.add_argument('--debug_epochs', type=int, help='Number of epochs to run in debug mode')
+    
+    args = parser.parse_args()
+    
     # Load configuration
-    with open("config/config.yaml", 'r') as f:
+    with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
+    
+    # Override config with command line arguments if provided
+    if args.model_type:
+        config['model']['type'] = args.model_type
+    if args.num_experts:
+        config['model']['num_experts'] = args.num_experts
+    if args.lr:
+        config['training']['lr'] = args.lr
+    if args.weight_decay:
+        config['training']['weight_decay'] = args.weight_decay
+    if args.epochs:
+        config['training']['epochs'] = args.epochs
+    if args.device:
+        config['experiment']['device'] = args.device
+    if args.seed:
+        config['experiment']['seed'] = args.seed
+    if args.augmentation:
+        config['augmentation']['enable'] = args.augmentation.lower() == 'true'
+    if args.aug_strategy:
+        config['augmentation']['strategy'] = args.aug_strategy
+    if args.expert_specific_aug:
+        config['augmentation']['expert_specific'] = args.expert_specific_aug.lower() == 'true'
+    if args.gating:
+        config['model']['gating'] = args.gating
+    if args.debug:
+        config['experiment']['debug']['enable'] = args.debug.lower() == 'true'
+    if args.debug_samples:
+        config['experiment']['debug']['num_samples'] = args.debug_samples
+    if args.debug_epochs:
+        config['experiment']['debug']['epochs'] = args.debug_epochs
     
     # Run training
     train(config) 
