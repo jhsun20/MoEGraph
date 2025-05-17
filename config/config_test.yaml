@@ -4,11 +4,11 @@
 experiment:
   name: "baseline_gnn"
   seed: 42
-  device: "cuda"  # or "cpu"
+  device: "cpu"  # or "cpu"
   debug:
-    enable: false
-    num_samples: 5
-    epochs: 5
+    enable: true
+    num_samples: 50
+    epochs: 50
 
 # Dataset configuration
 dataset:
