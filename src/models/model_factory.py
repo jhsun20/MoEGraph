@@ -1,4 +1,5 @@
 from models.gnn_models import GCN, GIN, GraphSAGE
+from models.experts import MoEModel
 
 def get_model(config, dataset_info):
     """
@@ -29,6 +30,8 @@ def get_model(config, dataset_info):
         model = GIN(num_features, num_classes, hidden_dim, num_layers, dropout, pooling)
     elif model_type == 'GraphSAGE':
         model = GraphSAGE(num_features, num_classes, hidden_dim, num_layers, dropout, pooling)
+    elif model_type == 'moe':
+        model = MoEModel(config, dataset_info)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
     

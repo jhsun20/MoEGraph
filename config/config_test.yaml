@@ -2,30 +2,35 @@
 
 # Experiment settings
 experiment:
-  name: "baseline_gnn"
+  name: "moe_nogate_noaug" # baseline_gnn or moe_nogate_noaug
   seed: 42
   device: "cuda"  # or "cpu"
   debug:
     enable: true
-    num_samples: 2000
+    num_samples: 1024
     epochs: 50
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODHIV"  # Specific dataset from GOOD
+  dataset_name: "GOODCMNIST"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 1
+  batch_size: 16
   num_workers: 4
 
 # Model configuration
 model:
-  type: "GIN"  # Options: GIN, GCN, GraphSAGE
+  type: "moe"  # Options: GIN, GCN, GraphSAGE, moe
   hidden_dim: 64
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
+
+# MoE specific configuration
+moe:
+  num_experts: 4
+  aggregation: "mean"  # Options: mean, majority_vote
 
 # Training configuration
 training:

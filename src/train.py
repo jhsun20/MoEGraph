@@ -73,6 +73,86 @@ def evaluate(model, loader, device, metric_type):
     
     return metrics
 
+def train_epoch_moe(model, loader, optimizer, dataset_info, device):
+    """Train MoE model for one epoch, allowing each expert to be trained independently."""
+    model.train()
+    total_loss = 0
+    all_outputs = [[] for _ in range(model.num_experts)]
+    all_targets = []
+    
+    for data in loader:
+        data = data.to(device)
+        optimizer.zero_grad()
+        
+        # Forward pass through each expert
+        expert_outputs = model(data)
+        losses = []
+        for i, output in enumerate(expert_outputs):
+            loss = F.cross_entropy(output, data.y)
+            losses.append(loss)
+            
+            # Zero gradients for all experts
+            for expert in model.experts:
+                for param in expert.parameters():
+                    param.grad = None
+            
+            # Backward pass for the current expert
+            loss.backward()
+            optimizer.step()
+            
+            # Check and print gradients to verify only the current expert is updated
+            # for j, expert in enumerate(model.experts):
+            #     has_gradients = any(param.grad is not None for param in expert.parameters())
+            #     print(f"Expert {j} {'has' if has_gradients else 'does not have'} gradients.")
+            
+            # Track metrics
+            total_loss += loss.item() * data.num_graphs
+            all_outputs[i].append(output.detach())
+            
+            # Print statement to confirm individual expert training
+            # print(f"Training Expert {i}: Loss = {loss.item():.4f}")
+        
+        all_targets.append(data.y.detach())
+        
+        # Print progress for each expert
+        # for i, loss in enumerate(losses):
+        #     print(f"Expert {i} - Loss: {loss.item():.4f}")
+    
+    # Compute epoch metrics
+    metrics = evaluate_moe(model, loader, device, dataset_info['metric'])
+    model.train()
+
+    return metrics
+
+def evaluate_moe(model, loader, device, metric_type):
+    """Evaluate MoE model on validation or test set."""
+    model.eval()
+    total_loss = 0
+    all_outputs = []
+    all_targets = []
+    
+    with torch.no_grad():
+        for data in loader:
+            data = data.to(device)
+            
+            # Forward pass
+            output = model(data)  # Aggregated output from all experts
+            loss = F.cross_entropy(output, data.y)
+            
+            # Track metrics
+            total_loss += loss.item() * data.num_graphs
+            all_outputs.append(output)
+            all_targets.append(data.y)
+    
+    # Compute metrics
+    avg_loss = total_loss / len(loader.dataset)
+    all_outputs = torch.cat(all_outputs, dim=0)
+    all_targets = torch.cat(all_targets, dim=0)
+    metrics = compute_metrics(all_outputs, all_targets, metric_type)
+    metrics['loss'] = avg_loss
+    
+    return metrics
+
 def train(config):
     """Main training function."""
     # Set random seeds for reproducibility
@@ -124,13 +204,18 @@ def train(config):
     
     for epoch in range(1, num_epochs + 1):
         # Train
-        train_metrics = train_epoch(model, train_loader, optimizer, dataset_info, device)
-        
-        # Validate on OOD validation set
-        val_metrics = evaluate(model, val_loader, device, metric_type)
-        
-        # Validate on in-distribution validation set
-        id_val_metrics = evaluate(model, id_val_loader, device, metric_type)
+        if config['model']['type'] == 'moe':
+            train_metrics = train_epoch_moe(model, train_loader, optimizer, dataset_info, device)
+            # Validate on OOD validation set
+            val_metrics = evaluate_moe(model, val_loader, device, metric_type)
+            # Validate on in-distribution validation set
+            id_val_metrics = evaluate_moe(model, id_val_loader, device, metric_type)
+        else:
+            train_metrics = train_epoch(model, train_loader, optimizer, dataset_info, device)
+            # Validate on OOD validation set
+            val_metrics = evaluate(model, val_loader, device, metric_type)
+            # Validate on in-distribution validation set
+            id_val_metrics = evaluate(model, id_val_loader, device, metric_type)
         
         # Log metrics
         logger.log_metrics(train_metrics, epoch, phase="train")

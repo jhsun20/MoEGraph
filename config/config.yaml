@@ -21,11 +21,16 @@ dataset:
 
 # Model configuration
 model:
-  type: "GIN"  # Options: GIN, GCN, GraphSAGE
+  type: "GIN"  # Options: GIN, GCN, GraphSAGE, moe
   hidden_dim: 64
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
+
+# MoE specific configuration
+moe:
+  num_experts: 4
+  aggregation: "mean"  # Options: mean, majority_vote
 
 # Training configuration
 training:
