@@ -395,7 +395,7 @@ class GOODHIV(InMemoryDataset):
 
         # Define networks' output shape.
         if train_dataset.task == 'Binary classification':
-            meta_info.num_classes = train_dataset.data.y.shape[1]
+            meta_info.num_classes = 2
         elif train_dataset.task == 'Regression':
             meta_info.num_classes = 1
         elif train_dataset.task == 'Multi-label classification':

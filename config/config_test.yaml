@@ -4,19 +4,19 @@
 experiment:
   name: "baseline_gnn"
   seed: 42
-  device: "cpu"  # or "cpu"
+  device: "cuda"  # or "cpu"
   debug:
     enable: true
-    num_samples: 50
+    num_samples: 2000
     epochs: 50
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODTwitter"  # Specific dataset from GOOD
+  dataset_name: "GOODHIV"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 32
+  batch_size: 1
   num_workers: 4
 
 # Model configuration

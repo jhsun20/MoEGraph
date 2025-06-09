@@ -6,5 +6,4 @@ from .good_cora import GOODCora
 from .good_twitch import GOODTwitch
 from .good_cmnist import GOODCMNIST
 from .good_hiv import GOODHIV
-from .good_lbap_core import GOODLBAPcore
 from .good_cbas import GOODCBAS

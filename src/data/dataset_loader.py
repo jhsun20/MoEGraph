@@ -61,7 +61,7 @@ def load_dataset(config):
                 if key in ['task', 'metric']:
                     continue
                 if datasets['task'] == 'Binary classification':
-                    setattr(dataset, 'n_classes', dataset.data.y.size(-1))
+                    setattr(dataset, 'n_classes', 2)
                 elif datasets['task'] == 'Regression':
                     setattr(dataset, 'n_classes', 1)
                 else:
@@ -70,21 +70,14 @@ def load_dataset(config):
 
     # Debug mode: use only a subset of the data
     if debug_config.get('enable', False):
-        num_samples = min(debug_config.get('num_samples', 100), len(dataset))
-        
-        # Use fixed subset if specified
-        if debug_config.get('fixed_subset', False):
-            # Deterministic sampling based on seed
-            indices = torch.arange(len(dataset))
-            indices = indices[torch.randperm(len(indices), generator=torch.Generator().manual_seed(42))[:num_samples]]
-        else:
-            indices = torch.randperm(len(dataset))[:num_samples]
+        print(datasets)
+        num_samples = min(debug_config.get('num_samples', 100), len(datasets['train']))
             
-        datasets['train'] = datasets['train'][indices]
-        datasets['val'] = datasets['val'][indices]
-        datasets['id_val'] = datasets['id_val'][indices]
-        datasets['test'] = datasets['test'][indices]
-        datasets['id_test'] = datasets['id_test'][indices]
+        datasets['train'] = datasets['train'][torch.randperm(len(datasets['train']))[:num_samples]]
+        datasets['val'] = datasets['val'][torch.randperm(len(datasets['val']))[:num_samples]]
+        datasets['id_val'] = datasets['id_val'][torch.randperm(len(datasets['id_val']))[:num_samples]]
+        datasets['test'] = datasets['test'][torch.randperm(len(datasets['test']))[:num_samples]]
+        datasets['id_test'] = datasets['id_test'][torch.randperm(len(datasets['id_test']))[:num_samples]]
         print(f"Debug mode: using {num_samples} samples")
     
     # Create dataloaders
