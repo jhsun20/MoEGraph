@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_nodiverse_4exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moeuil_nodiverse_3exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -33,13 +33,13 @@ model:
   weight_ce: 1.0
   weight_div: 0.0
   weight_load: 0.0
-  num_experts: 4
+  num_experts: 3
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
 # Training configuration
 training:
-  epochs: 100
+  epochs: 20
   lr: 0.001
   weight_decay: 0.0001
   early_stopping:
