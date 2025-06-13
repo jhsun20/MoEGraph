@@ -235,3 +235,5 @@ class MoEUILModel(nn.Module):
         else:
             return F.cross_entropy(pred, target)
 
+    def set_epoch(self, epoch: int):
+        self.current_epoch = epoch

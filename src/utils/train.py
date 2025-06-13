@@ -563,8 +563,10 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     all_aggregated_outputs = []
     if config['model']['parallel']:
         verbose = model.module.verbose
+        model.module.set_epoch(epoch)
     else:
         verbose = model.verbose
+        model.set_epoch(epoch)
 
     # Track expert usage
     gate_weight_accumulator = []
@@ -582,7 +584,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
 
         # Step 3: Forward through MoE
         with autocast():
-            aggregated_outputs = model(data, epoch)
+            aggregated_outputs = model(data)
             loss = aggregated_outputs['loss_total']
 
         scaler.scale(loss).backward()
@@ -637,7 +639,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     return metrics
 
 
-def evaluate_moeuil(model, loader, device, metric_type, epoch):
+def evaluate_moeuil(model, loader, device, metric_type, epoch, config):
     """Evaluate MoE model on validation or test set."""
     model.eval()
     total_loss = 0
@@ -651,6 +653,12 @@ def evaluate_moeuil(model, loader, device, metric_type, epoch):
     all_aggregated_outputs = []
     # Track expert usage
     gate_weight_accumulator = []
+    if config['model']['parallel']:
+        verbose = model.module.verbose
+        model.module.set_epoch(epoch)
+    else:
+        verbose = model.verbose
+        model.set_epoch(epoch)
 
     pbar = tqdm(loader, desc='Evaluating MoEUIL', leave=False)
     for data in pbar:
@@ -658,7 +666,7 @@ def evaluate_moeuil(model, loader, device, metric_type, epoch):
 
         # Step 3: Forward through MoE
         with autocast():
-            aggregated_outputs = model(data, epoch)
+            aggregated_outputs = model(data)
         batch_size = data.y.size(0)
 
         # Step 4: Gate schedule

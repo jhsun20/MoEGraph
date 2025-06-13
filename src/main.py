@@ -117,9 +117,9 @@ def train(config):
             elif config['model']['type'] == 'moe_uil':
                 train_metrics = train_epoch_moeuil(model, train_loader, optimizer, dataset_info, device, epoch, config)
                 # Validate on OOD validation set
-                val_metrics = evaluate_moeuil(model, val_loader, device, metric_type, epoch)
+                val_metrics = evaluate_moeuil(model, val_loader, device, metric_type, epoch, config)
                 # Validate on in-distribution validation set
-                id_val_metrics = evaluate_moeuil(model, id_val_loader, device, metric_type, epoch)
+                id_val_metrics = evaluate_moeuil(model, id_val_loader, device, metric_type, epoch, config)
             else:
                 train_metrics = train_epoch(model, train_loader, optimizer, dataset_info, device)
                 # Validate on OOD validation set
@@ -201,8 +201,8 @@ def train(config):
             test_ood_metrics = evaluate_uil(model, test_loader, device, metric_type)
             test_id_metrics = evaluate_uil(model, id_test_loader, device, metric_type)
         elif config['model']['type'] == 'moe_uil':
-            test_ood_metrics = evaluate_moeuil(model, test_loader, device, metric_type, epoch)
-            test_id_metrics = evaluate_moeuil(model, id_test_loader, device, metric_type, epoch)
+            test_ood_metrics = evaluate_moeuil(model, test_loader, device, metric_type, epoch, config)
+            test_id_metrics = evaluate_moeuil(model, id_test_loader, device, metric_type, epoch, config)
         else:
             test_ood_metrics = evaluate(model, test_loader, device, metric_type)
             test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
