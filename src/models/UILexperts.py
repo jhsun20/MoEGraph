@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from models.UIL import UILModel
 from models.gnn_models import GIN
 from entmax import entmax15, entmax_bisect
+from torch_geometric.data import Batch
 
 class MoEUILModel(nn.Module):
     def __init__(self, config, dataset_info):
@@ -43,6 +44,8 @@ class MoEUILModel(nn.Module):
 
     def forward(self, data, epoch):
         # Always give the gate the unaugmented input
+        if isinstance(data, (tuple, list)):
+            data = Batch.from_data_list(data)
         gate_weights = self.get_gate_weights(data, epoch)
         
         if self.verbose:
