@@ -23,6 +23,7 @@ dataset:
 # Model configuration
 model:
   type: "moe_uil"  # Options: GIN, GCN, GraphSAGE, moe, moe_uil, uil
+  parallel: true 
   hidden_dim: 64
   num_layers: 3
   dropout: 0.5

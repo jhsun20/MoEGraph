@@ -6,6 +6,9 @@ from sklearn.metrics import (
     roc_auc_score
 )
 
+from sklearn.preprocessing import label_binarize
+from scipy.special import softmax, expit  # Numerically stable versions
+
 def compute_metrics(outputs, targets, metric_type='Accuracy', threshold=0.5):
     """
     Compute metrics based on the dataset's primary metric type.
@@ -54,22 +57,31 @@ def compute_metrics(outputs, targets, metric_type='Accuracy', threshold=0.5):
     
     elif metric_type == 'ROC-AUC':
         # ROC-AUC specific metrics
-        if outputs.shape[1] > 1:  # Multi-class
-            preds = np.argmax(outputs, axis=1)
-            probs = outputs
+        # print(outputs.shape)
+        # print(targets.shape)
+        if outputs.shape[1] > 2:  # Multi-class
+            probs = softmax(outputs, axis=1)
             try:
-                metrics['roc_auc'] = roc_auc_score(targets, probs, multi_class='ovr')
+                metrics['roc_auc'] = roc_auc_score(targets, probs, multi_class='ovo')
             except ValueError:
                 # Fallback if ROC-AUC fails (e.g., only one class present)
+                print('valueerror multiclass')
                 metrics['roc_auc'] = 0.0
         else:  # Binary
-            preds = (outputs > threshold).astype(int)
             try:
-                metrics['roc_auc'] = roc_auc_score(targets, outputs)
+                # For binary classification, use the second column (probability of positive class)
+                if outputs.shape[1] == 2:
+                    probs = softmax(outputs, axis=1)[:, 1]  # Get probability of positive class
+                else:
+                    probs = outputs.squeeze()  # If already single column
+                # print(probs.shape)
+                metrics['roc_auc'] = roc_auc_score(targets, probs)
             except ValueError:
+                print('valueerror binary')
                 metrics['roc_auc'] = 0.0
         
         # Include accuracy as a secondary metric
+        preds = np.argmax(outputs, axis=1)
         metrics['accuracy'] = accuracy_score(targets, preds)
     
     elif metric_type == 'Average Precision':

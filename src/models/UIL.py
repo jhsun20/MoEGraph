@@ -98,7 +98,29 @@ class UILModel(nn.Module):
         return output
     
     def compute_classification_loss(self, pred, target):
-        return F.cross_entropy(pred, target)
+        """
+        Computes weighted cross-entropy loss with automatic class imbalance correction.
+        
+        Args:
+            pred (Tensor): Logits of shape (B, C)
+            target (Tensor): Ground truth labels of shape (B,)
+        
+        Returns:
+            Tensor: Weighted cross-entropy loss
+        """
+        # Compute class counts from current batch
+        num_classes = pred.size(1)
+        class_counts = torch.bincount(target, minlength=num_classes).float()
+        
+        # Avoid division by zero
+        class_counts[class_counts == 0] = 1.0
+
+        # Inverse frequency weighting normalized to sum to 1
+        weight = 1.0 / class_counts
+        weight = weight / weight.sum()
+        
+        return F.cross_entropy(pred, target, weight=weight.to(pred.device))
+
 
     def compute_mask_regularization(self):
         node_mask = self.cached_masks['node_mask']

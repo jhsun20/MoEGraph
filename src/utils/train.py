@@ -90,7 +90,10 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     total_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    verbose = model.verbose
+    if config['model']['parallel']:
+        verbose = model.module.verbose
+    else:
+        verbose = model.verbose
     use_aug = config['augmentation']['enable']
     if use_aug:
         use_div = config['augmentation']['diversity']
@@ -357,7 +360,7 @@ def evaluate_uil(model, loader, device, metric_type):
     orig_edges_list = []
     stable_nodes_list = []
     stable_edges_list = []
-    verbose = model.verbose
+    # verbose = model.verbose
     
     pbar = tqdm(loader, desc='Evaluating UIL', leave=False)
     with torch.no_grad():
@@ -377,35 +380,35 @@ def evaluate_uil(model, loader, device, metric_type):
             all_outputs.append(output['logits'])
             all_targets.append(data.y)
 
-            if verbose:
-                node_mask = output['node_mask'].squeeze()  # (N,)
-                edge_mask = output['edge_mask'].squeeze()  # (E,)
-                edge_index = output['cached_masks']['edge_index']
-                batch_vec = output['cached_masks']['batch']
+            # if verbose:
+            #     node_mask = output['node_mask'].squeeze()  # (N,)
+            #     edge_mask = output['edge_mask'].squeeze()  # (E,)
+            #     edge_index = output['cached_masks']['edge_index']
+            #     batch_vec = output['cached_masks']['batch']
 
-                # Original node/edge counts per graph
-                node_counts = torch.bincount(batch_vec)
-                edge_graphs = batch_vec[edge_index[0]]
-                edge_counts = torch.bincount(edge_graphs, minlength=node_counts.size(0))
+            #     # Original node/edge counts per graph
+            #     node_counts = torch.bincount(batch_vec)
+            #     edge_graphs = batch_vec[edge_index[0]]
+            #     edge_counts = torch.bincount(edge_graphs, minlength=node_counts.size(0))
 
-                # Stable node/edge counts per graph
-                stable_mask = (node_mask >= 0.5)
-                stable_graphs = batch_vec[stable_mask]
-                stable_node_counts = torch.bincount(stable_graphs, minlength=node_counts.size(0))
+            #     # Stable node/edge counts per graph
+            #     stable_mask = (node_mask >= 0.5)
+            #     stable_graphs = batch_vec[stable_mask]
+            #     stable_node_counts = torch.bincount(stable_graphs, minlength=node_counts.size(0))
 
-                src, dst = edge_index
-                stable_edges_mask = (
-                    (node_mask[src] >= 0.5) &
-                    (node_mask[dst] >= 0.5) &
-                    (edge_mask >= 0.5)
-                )
-                stable_edge_graphs = batch_vec[src][stable_edges_mask]
-                stable_edge_counts = torch.bincount(stable_edge_graphs, minlength=node_counts.size(0))
+            #     src, dst = edge_index
+            #     stable_edges_mask = (
+            #         (node_mask[src] >= 0.5) &
+            #         (node_mask[dst] >= 0.5) &
+            #         (edge_mask >= 0.5)
+            #     )
+            #     stable_edge_graphs = batch_vec[src][stable_edges_mask]
+            #     stable_edge_counts = torch.bincount(stable_edge_graphs, minlength=node_counts.size(0))
 
-                orig_nodes_list.extend(node_counts.tolist())
-                orig_edges_list.extend(edge_counts.tolist())
-                stable_nodes_list.extend(stable_node_counts.tolist())
-                stable_edges_list.extend(stable_edge_counts.tolist())
+            #     orig_nodes_list.extend(node_counts.tolist())
+            #     orig_edges_list.extend(edge_counts.tolist())
+            #     stable_nodes_list.extend(stable_node_counts.tolist())
+            #     stable_edges_list.extend(stable_edge_counts.tolist())
     
     # Compute metrics
     avg_loss = total_loss / len(loader.dataset)
@@ -421,11 +424,11 @@ def evaluate_uil(model, loader, device, metric_type):
     metrics['loss_reg'] = avg_reg_loss
     metrics['loss_sem'] = avg_sem_loss
     metrics['loss_str'] = avg_str_loss
-    if verbose:
-        metrics['avg_nodes_orig'] = float(np.mean(orig_nodes_list)) if orig_nodes_list else 0.0
-        metrics['avg_edges_orig'] = float(np.mean(orig_edges_list)) if orig_edges_list else 0.0
-        metrics['avg_nodes_stable'] = float(np.mean(stable_nodes_list)) if stable_nodes_list else 0.0
-        metrics['avg_edges_stable'] = float(np.mean(stable_edges_list)) if stable_edges_list else 0.0
+    # if verbose:
+    #     metrics['avg_nodes_orig'] = float(np.mean(orig_nodes_list)) if orig_nodes_list else 0.0
+    #     metrics['avg_edges_orig'] = float(np.mean(orig_edges_list)) if orig_edges_list else 0.0
+    #     metrics['avg_nodes_stable'] = float(np.mean(stable_nodes_list)) if stable_nodes_list else 0.0
+    #     metrics['avg_edges_stable'] = float(np.mean(stable_edges_list)) if stable_edges_list else 0.0
     
     return metrics
 
@@ -558,7 +561,10 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    verbose = model.verbose
+    if config['model']['parallel']:
+        verbose = model.module.verbose
+    else:
+        verbose = model.verbose
 
     # Track expert usage
     gate_weight_accumulator = []
@@ -638,8 +644,6 @@ def evaluate_moeuil(model, loader, device, metric_type, epoch):
     total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    verbose = model.verbose
-
     # Track expert usage
     gate_weight_accumulator = []
 

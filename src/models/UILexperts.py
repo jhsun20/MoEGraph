@@ -88,7 +88,7 @@ class MoEUILModel(nn.Module):
             # print('stacked_logits', stacked_logits.shape) # returns ([num_experts, batch_size, num_classes])
             weighted_logits = stacked_logits * gate_weights
             aggregated_logits = torch.sum(weighted_logits, dim=0)
-            aggregated_ce_loss += F.cross_entropy(aggregated_logits, data.y)
+            aggregated_ce_loss += self.compute_classification_loss(aggregated_logits, data.y)
             for i, output in enumerate(expert_outputs):
                 weight = gate_weights[i, 0, 0]  # Extract scalar weight for this expert
                 aggregated_reg_loss += weight * output['loss_reg']
@@ -206,3 +206,28 @@ class MoEUILModel(nn.Module):
             raise ValueError(f"Unsupported load balance loss type: {loss_type}")
 
         return load_balance_loss
+    
+    def compute_classification_loss(self, pred, target):
+        """
+        Computes weighted cross-entropy loss with automatic class imbalance correction.
+        
+        Args:
+            pred (Tensor): Logits of shape (B, C)
+            target (Tensor): Ground truth labels of shape (B,)
+        
+        Returns:
+            Tensor: Weighted cross-entropy loss
+        """
+        # Compute class counts from current batch
+        num_classes = pred.size(1)
+        class_counts = torch.bincount(target, minlength=num_classes).float()
+        
+        # Avoid division by zero
+        class_counts[class_counts == 0] = 1.0
+
+        # Inverse frequency weighting normalized to sum to 1
+        weight = 1.0 / class_counts
+        weight = weight / weight.sum()
+        
+        return F.cross_entropy(pred, target, weight=weight.to(pred.device))
+

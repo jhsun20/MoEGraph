@@ -24,7 +24,11 @@ def load_dataset(config):
     """
     dataset_config = config['dataset']
     debug_config = config['experiment']['debug']
-    
+    seed = config['experiment'].get('seed', 42)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
     # Ensure dataset directory exists
     dataset_path = dataset_config['path']
     os.makedirs(dataset_path, exist_ok=True)
@@ -78,7 +82,7 @@ def load_dataset(config):
     # Create dataloaders
     batch_size = dataset_config.get('batch_size', 32)
     num_workers = dataset_config.get('num_workers', 0)
-    
+
     train_loader = DataLoader(
         datasets['train'],
         batch_size=batch_size,
@@ -132,7 +136,7 @@ def load_dataset(config):
     print(f"Dataset: {dataset_name} ({shift_type})")
     print(f"Task type: {task_type}")
     print(f"Features: {meta_info.dim_node}, Classes: {meta_info.num_classes}")
-    print(f"Samples - Train: {len(datasets['train'])}, Val: {len(datasets['val'])}, Test: {len(datasets['test'])}")
+    print(f"Samples - Train: {len(datasets['train'])}, Val: {len(datasets['val'])}, ID Val: {len(datasets['id_val'])}, Test: {len(datasets['test'])}, ID Test: {len(datasets['id_test'])}")
     print(f"Evaluation metric: {datasets['metric']}")
     print(f"===============================\n")
     
