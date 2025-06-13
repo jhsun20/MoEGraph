@@ -86,7 +86,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     total_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    verbose = model.verbose
+    verbose = model.module.verbose
     use_aug = config['augmentation']['enable']
     if use_aug:
         use_div = config['augmentation']['diversity']
@@ -95,7 +95,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         use_div = False
         div_weight = 0.0
 
-    num_experts = model.num_experts
+    num_experts = model.module.num_experts
 
     # Track parameter outputs per expert
     param_accumulators = [[] for _ in range(num_experts)]
@@ -141,12 +141,12 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         # Step 4: Gate schedule
         if epoch < config['gate']['train_after']:
             gate_weights = torch.full_like(gate_weights, 1.0 / num_experts)
-            for param in model.gate.parameters():
+            for param in model.module.gate.parameters():
                 param.requires_grad = False
             if verbose:
                 print("Gating frozen — using uniform weights.")
         else:
-            for param in model.gate.parameters():
+            for param in model.module.gate.parameters():
                 param.requires_grad = True
             if verbose:
                 print("Gating unfreezed")
@@ -212,7 +212,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         # Logging
         total_loss += total_loss_value.item() * batch_size
         all_targets.append(data.y.detach())
-        aggregated = model.aggregate(expert_outputs, gate_weights)
+        aggregated = model.module.aggregate(expert_outputs, gate_weights)
         all_aggregated_outputs.append(aggregated.detach())
 
     avg_expert_params = {}
@@ -252,7 +252,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch=1000):
     total_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    verbose = model.verbose
+    verbose = model.module.verbose
 
     if verbose:
         print("Evaluating on validation/test set now...")
@@ -267,10 +267,10 @@ def evaluate_moe(model, loader, device, metric_type, epoch=1000):
 
             # Apply uniform weights if in warm-up
             if epoch < config['gate']['train_after']:
-                gate_weights = torch.full_like(gate_weights, 1.0 / model.num_experts)
+                gate_weights = torch.full_like(gate_weights, 1.0 / model.module.num_experts)
 
             # Aggregate predictions using gate weights
-            aggregated = model.aggregate(expert_outputs, gate_weights)
+            aggregated = model.module.aggregate(expert_outputs, gate_weights)
             all_aggregated_outputs.append(aggregated)
             all_targets.append(data.y)
 
@@ -351,7 +351,7 @@ def evaluate_uil(model, loader, device, metric_type):
     orig_edges_list = []
     stable_nodes_list = []
     stable_edges_list = []
-    verbose = model.verbose
+    verbose = model.module.verbose
     
     with torch.no_grad():
         for data in loader:
@@ -549,7 +549,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    verbose = model.verbose
+    verbose = model.module.verbose
 
     # Track expert usage
     gate_weight_accumulator = []
@@ -624,7 +624,7 @@ def evaluate_moeuil(model, loader, device, metric_type, epoch):
     total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    verbose = model.verbose
+    verbose = model.module.verbose
 
     # Track expert usage
     gate_weight_accumulator = []
