@@ -24,7 +24,7 @@ dataset:
 model:
   type: "moe_uil"  # Options: GIN, GCN, GraphSAGE, moe, moe_uil, uil
   hidden_dim: 64
-  num_layers: 2
+  num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
   weight_str: 0.0
@@ -61,5 +61,5 @@ gate:
   entmax_alpha: 1.3
   model: "GIN"
   depth: 2
-  hidden_dim: 32
+  hidden_dim: 64
   train_after: 10
