@@ -20,6 +20,11 @@ class Logger:
         self.experiment_name = config['experiment']['name']
         self.model_type = config['model']['type']
         
+        # Initialize best checkpoint tracking
+        self.best_checkpoint_path = None
+        self.best_metric_value = float('-inf')  # Will be updated when metric type is set
+        self.metric_type = None  # Will be set later
+        
         # Create log directory
         self.log_dir = os.path.join(
             "logs", 
@@ -125,7 +130,7 @@ class Logger:
     
     def save_model(self, model, epoch, metrics):
         """
-        Save model checkpoint.
+        Save model checkpoint and update best checkpoint if needed.
         
         Args:
             model (torch.nn.Module): Model to save
@@ -140,8 +145,7 @@ class Logger:
         os.makedirs(checkpoint_dir, exist_ok=True)
         
         # Get primary metric for filename
-        metric_type = metrics.get('metric_type', 'Accuracy')
-        primary_metric_name = self._get_primary_metric_name(metric_type)
+        primary_metric_name = self._get_primary_metric_name(self.metric_type)
         primary_metric_value = metrics.get(primary_metric_name, 0.0)
         
         # Save checkpoint
@@ -155,7 +159,33 @@ class Logger:
             'metrics': metrics
         }, checkpoint_path)
         
-        self.logger.info(f"Model checkpoint saved to {checkpoint_path}")
+        # Update best checkpoint if needed
+        is_better = (primary_metric_value < self.best_metric_value) if self.metric_type in ['RMSE', 'MAE'] else (primary_metric_value > self.best_metric_value)
+        if is_better:
+            self.best_metric_value = primary_metric_value
+            self.best_checkpoint_path = checkpoint_path
+            self.logger.info(f"New best model saved with {primary_metric_name}: {primary_metric_value:.4f}")
+        else:
+            self.logger.info(f"Model checkpoint saved to {checkpoint_path}")
+    
+    def load_best_model(self, model):
+        """
+        Load the best model checkpoint.
+        
+        Args:
+            model (torch.nn.Module): Model to load weights into
+            
+        Returns:
+            dict: Metrics from the best checkpoint
+        """
+        if self.best_checkpoint_path is None:
+            self.logger.warning("No best checkpoint found!")
+            return None
+            
+        checkpoint = torch.load(self.best_checkpoint_path)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        self.logger.info(f"Loaded best model from epoch {checkpoint['epoch']} with metrics: {checkpoint['metrics']}")
+        return checkpoint['metrics']
     
     def close(self):
         """
@@ -168,4 +198,16 @@ class Logger:
         # Close file handlers
         for handler in self.logger.handlers[:]:
             handler.close()
-            self.logger.removeHandler(handler) 
+            self.logger.removeHandler(handler)
+    
+    def set_metric_type(self, metric_type):
+        """
+        Set the metric type and initialize best metric value accordingly.
+        
+        Args:
+            metric_type (str): Type of metric (e.g., 'Accuracy', 'RMSE', 'MAE')
+        """
+        self.metric_type = metric_type
+        # Initialize best metric value based on metric type
+        self.best_metric_value = float('-inf') if metric_type not in ['RMSE', 'MAE'] else float('inf')
+        self.logger.info(f"Set metric type to {metric_type}") 

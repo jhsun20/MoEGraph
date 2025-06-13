@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 import argparse
 import datetime
+import gc
 from torch_geometric.nn import DataParallel
 
 from data.dataset_loader import load_dataset
@@ -38,6 +39,7 @@ def train(config):
     
     logger.logger.info(f"Dataset info: {dataset_info}")
     metric_type = dataset_info['metric']
+    logger.set_metric_type(metric_type)  # Set the metric type in logger
  
     # Get today's date and current time
     now = datetime.datetime.now()
@@ -74,7 +76,7 @@ def train(config):
         if config['model']['parallel']:
             model = DataParallel(model)
         model = model.to(device)
-        
+
         if config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil':
             optimizer = torch.optim.Adam(
                 model.parameters(),
@@ -193,6 +195,16 @@ def train(config):
         
         # Final evaluation on test sets
         logger.logger.info("Evaluating on test sets...")
+        del optimizer
+        if 'scaler' in locals():
+            del scaler  # if using AMP
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # Load the best model checkpoint before final evaluation
+        logger.logger.info("Loading best model checkpoint for final evaluation...")
+        logger.load_best_model(model)
+        
         if config['model']['type'] == 'moe':
             test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type)
             test_id_metrics = evaluate_moe(model, id_test_loader, device, metric_type)
