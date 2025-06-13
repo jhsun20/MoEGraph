@@ -71,9 +71,9 @@ def train(config):
         # Initialize model
         logger.logger.info(f"Initializing {config['model']['type']} model...")
         model = get_model(config, dataset_info)
-        model = model.to(device)
         if config['model']['parallel']:
             model = DataParallel(model)
+        model = model.to(device)
         
         if config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil':
             optimizer = torch.optim.Adam(
@@ -255,8 +255,8 @@ def train(config):
         print(f"All test OOD metrics: {all_test_ood_metrics}")
         print(f"All test ID metrics: {all_test_id_metrics}")
     # Calculate average accuracies for test OOD and test ID metrics
-    avg_test_ood_accuracy = sum(metrics['accuracy'] for metrics in all_test_ood_metrics) / len(all_test_ood_metrics)
-    avg_test_id_accuracy = sum(metrics['accuracy'] for metrics in all_test_id_metrics) / len(all_test_id_metrics)
+    avg_test_ood_primary_metric = sum(metrics[primary_metric] for metrics in all_test_ood_metrics) / len(all_test_ood_metrics)
+    avg_test_id_primary_metric = sum(metrics[primary_metric] for metrics in all_test_id_metrics) / len(all_test_id_metrics)
     results_path = os.path.join(results_dir, "metrics.yaml")
     with open(results_path, 'w') as f:
         yaml.dump({
@@ -265,8 +265,8 @@ def train(config):
             'val_id': all_val_id_metrics,
             'test_ood': all_test_ood_metrics,
             'test_id': all_test_id_metrics,
-            'avg_test_ood_accuracy': avg_test_ood_accuracy,
-            'avg_test_id_accuracy': avg_test_id_accuracy
+            'avg_test_ood_primary_metric': avg_test_ood_primary_metric,
+            'avg_test_id_primary_metric': avg_test_id_primary_metric
         }, f)
     
     logger.logger.info(f"Results saved to {results_path}")

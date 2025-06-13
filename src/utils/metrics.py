@@ -62,7 +62,7 @@ def compute_metrics(outputs, targets, metric_type='Accuracy', threshold=0.5):
         if outputs.shape[1] > 2:  # Multi-class
             probs = softmax(outputs, axis=1)
             try:
-                metrics['roc_auc'] = roc_auc_score(targets, probs, multi_class='ovo')
+                metrics['roc_auc'] = roc_auc_score(targets, probs, multi_class='ovo').item()
             except ValueError:
                 # Fallback if ROC-AUC fails (e.g., only one class present)
                 print('valueerror multiclass')
@@ -75,7 +75,7 @@ def compute_metrics(outputs, targets, metric_type='Accuracy', threshold=0.5):
                 else:
                     probs = outputs.squeeze()  # If already single column
                 # print(probs.shape)
-                metrics['roc_auc'] = roc_auc_score(targets, probs)
+                metrics['roc_auc'] = roc_auc_score(targets, probs).item()
             except ValueError:
                 print('valueerror binary')
                 metrics['roc_auc'] = 0.0
