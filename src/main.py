@@ -196,8 +196,8 @@ def train(config):
             test_ood_metrics = evaluate_uil(model, test_loader, device, metric_type)
             test_id_metrics = evaluate_uil(model, id_test_loader, device, metric_type)
         elif config['model']['type'] == 'moe_uil':
-            test_ood_metrics = evaluate_moeuil(model, test_loader, device, metric_type)
-            test_id_metrics = evaluate_moeuil(model, id_test_loader, device, metric_type)
+            test_ood_metrics = evaluate_moeuil(model, test_loader, device, metric_type, epoch)
+            test_id_metrics = evaluate_moeuil(model, id_test_loader, device, metric_type, epoch)
         else:
             test_ood_metrics = evaluate(model, test_loader, device, metric_type)
             test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
