@@ -44,11 +44,6 @@ class MoEUILModel(nn.Module):
 
     def forward(self, data):
         # Always give the gate the unaugmented input
-        if isinstance(data, (tuple, list)):
-            print("Data is a tuple or list")
-            data = Batch.from_data_list(data)
-        
-        print("Getting gate weights")
         gate_weights = self.get_gate_weights(data)
         
         if self.verbose:
