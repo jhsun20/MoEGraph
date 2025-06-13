@@ -573,17 +573,8 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
 
     pbar = tqdm(loader, desc='Training MoEUIL', leave=False)
     for data in pbar:
-        print(f"Batch:")
-        print(f"  x shape: {data.x.shape if hasattr(data, 'x') else 'No x'}")
-        print(f"  edge_index shape: {data.edge_index.shape if hasattr(data, 'edge_index') else 'No edge_index'}")
-        print(f"  y shape: {data.y.shape if hasattr(data, 'y') else 'No y'}")
-        print(f"  batch shape: {data.batch.shape if hasattr(data, 'batch') else 'No batch'}")
-        print(f"  type: {type(data)}")
-        print(f"  data: {data}")
-        data_list = data.to_data_list()
-        print(f"  data_list: {data_list}")
-        for graph in data_list:
-            print(f"  num nodes: {graph.num_nodes}")
+        if config['model']['parallel']:
+            data = data.to_data_list()
         
         data = data.to(device)
         optimizer.zero_grad()
