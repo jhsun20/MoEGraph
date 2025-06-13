@@ -9,6 +9,7 @@ import datetime
 import networkx as nx
 import matplotlib.pyplot as plt
 from torch_geometric.utils import to_networkx
+from torch.cuda.amp import autocast, GradScaler
 import gc
 
 from data.dataset_loader import load_dataset
@@ -546,6 +547,8 @@ def evaluate_uil_visually(model, loader, device, metric_type, visualize_every=10
 
 def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, config):
     model.train()
+    scaler = GradScaler()
+
     total_loss = 0
     total_ce_loss = 0
     total_reg_loss = 0
@@ -567,7 +570,14 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
         optimizer.zero_grad()
 
         # Step 3: Forward through MoE
-        aggregated_outputs = model(data, epoch)
+        with autocast():
+            aggregated_outputs = model(data, epoch)
+            loss = aggregated_outputs['loss_total']
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
         batch_size = data.y.size(0)
 
         # Step 4: Gate schedule
@@ -644,7 +654,8 @@ def evaluate_moeuil(model, loader, device, metric_type, epoch):
         data = data.to(device)
 
         # Step 3: Forward through MoE
-        aggregated_outputs = model(data, epoch)
+        with autocast():
+            aggregated_outputs = model(data, epoch)
         batch_size = data.y.size(0)
 
         # Step 4: Gate schedule
