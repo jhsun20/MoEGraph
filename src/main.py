@@ -69,7 +69,7 @@ def train(config):
         logger.logger.info(f"Initializing {config['model']['type']} model...")
         model = get_model(config, dataset_info)
         model = model.to(device)
-        model = torch.nn.DataParallel(model)
+        # model = torch.nn.DataParallel(model)
         
         if config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil':
             optimizer = torch.optim.Adam(
@@ -239,7 +239,7 @@ def train(config):
         all_val_id_metrics.append(id_val_metrics)
         # Save the final model checkpoint
         final_checkpoint_path = os.path.join(results_dir, "final_model_checkpoint_{seed}.pth")
-        torch.save(model.module.state_dict(), final_checkpoint_path)
+        torch.save(model.state_dict(), final_checkpoint_path)
         logger.logger.info(f"Final model checkpoint saved to {final_checkpoint_path}")
 
     # Save results after all seeds have been processed
