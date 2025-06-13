@@ -582,6 +582,8 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
         print(f"  data: {data}")
         data_list = data.to_data_list()
         print(f"  data_list: {data_list}")
+        for graph in data_list:
+            print(f"  num nodes: {graph.num_nodes}")
         
         data = data.to(device)
         optimizer.zero_grad()
