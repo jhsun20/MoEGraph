@@ -99,6 +99,7 @@ def train(config):
         logger.logger.info("Starting training...")
         best_val_acc = 0
         patience_counter = 0
+        best_epoch = 0  # Track the best epoch
         
         # Adjust epochs if in debug mode
         num_epochs = config['experiment']['debug']['epochs'] if config['experiment']['debug']['enable'] else config['training']['epochs']
@@ -187,6 +188,7 @@ def train(config):
             if is_better:
                 best_val_acc = current_metric
                 patience_counter = 0
+                best_epoch = epoch  # Update best epoch
                 logger.save_model(model, epoch, val_metrics)
             else:
                 patience_counter += 1
@@ -220,8 +222,9 @@ def train(config):
             test_ood_metrics = evaluate(model, test_loader, device, metric_type)
             test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
         
-        logger.log_metrics(test_ood_metrics, phase="test_ood")
-        logger.log_metrics(test_id_metrics, phase="test_id")
+        # Log test metrics with the best epoch
+        logger.log_metrics(test_ood_metrics, best_epoch, phase="test_ood")
+        logger.log_metrics(test_id_metrics, best_epoch, phase="test_id")
 
         if (config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil') and verbose:
             logger.log_metrics({
@@ -235,7 +238,7 @@ def train(config):
                     'avg_edges_orig': round(test_ood_metrics.get('avg_edges_orig', 0), 2),
                     'avg_nodes_stable': round(test_ood_metrics.get('avg_nodes_stable', 0), 2),
                     'avg_edges_stable': round(test_ood_metrics.get('avg_edges_stable', 0), 2),
-                }, epoch, phase="test_ood")
+                }, best_epoch, phase="test_ood")
         
             logger.log_metrics({
                     'loss_ce': round(test_id_metrics.get('loss_ce', 0), 2),
@@ -248,7 +251,7 @@ def train(config):
                     'avg_edges_orig': round(test_id_metrics.get('avg_edges_orig', 0), 2),
                     'avg_nodes_stable': round(test_id_metrics.get('avg_nodes_stable', 0), 2),
                     'avg_edges_stable': round(test_id_metrics.get('avg_edges_stable', 0), 2),
-                }, epoch, phase="test_id")
+                }, best_epoch, phase="test_id")
             
         all_test_ood_metrics.append(test_ood_metrics)
         all_test_id_metrics.append(test_id_metrics)
