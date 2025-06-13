@@ -580,6 +580,8 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
         print(f"  batch shape: {data.batch.shape if hasattr(data, 'batch') else 'No batch'}")
         print(f"  type: {type(data)}")
         print(f"  data: {data}")
+        for graph in data:
+            print(f"  num nodes: {graph.num_nodes}")
         
         data = data.to(device)
         optimizer.zero_grad()
