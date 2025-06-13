@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_8exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moeuil_diverse_balance_4exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -32,8 +32,8 @@ model:
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 1.0
-  weight_load: 0.0
-  num_experts: 8
+  weight_load: 1.0
+  num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
