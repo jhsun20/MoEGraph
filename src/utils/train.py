@@ -9,6 +9,7 @@ import datetime
 import networkx as nx
 import matplotlib.pyplot as plt
 from torch_geometric.utils import to_networkx
+import gc
 
 from data.dataset_loader import load_dataset
 from models.model_factory import get_model
@@ -615,7 +616,9 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
-    
+    gc.collect()
+    torch.cuda.empty_cache()
+
     return metrics
 
 
@@ -681,5 +684,7 @@ def evaluate_moeuil(model, loader, device, metric_type, epoch):
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
-   
+    gc.collect()
+    torch.cuda.empty_cache()
+
     return metrics
