@@ -9,7 +9,7 @@ experiment:
     num_samples: 512
     epochs: 50
     verbose: false
-  seeds: [1, 2, 3]  # Add more seeds as needed
+  seeds: [1]  # Add more seeds as needed
 
 # Dataset configuration
 dataset:
