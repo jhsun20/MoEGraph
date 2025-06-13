@@ -6,9 +6,9 @@ experiment:
   device: "cuda"  # or "cpu"
   debug:
     enable: true
-    num_samples: 1024
+    num_samples: 128
     epochs: 50
-    verbose: false
+    verbose: true
   seeds: [1]  # Add more seeds as needed
 
 # Dataset configuration
