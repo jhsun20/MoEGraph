@@ -42,11 +42,11 @@ class MoEUILModel(nn.Module):
         if self.verbose:
             print(f"Initialized MoEUILModel with {self.num_experts} experts and a gating mechanism.")
 
-    def forward(self, data, epoch):
+    def forward(self, data):
         # Always give the gate the unaugmented input
         if isinstance(data, (tuple, list)):
             data = Batch.from_data_list(data)
-        gate_weights = self.get_gate_weights(data, epoch)
+        gate_weights = self.get_gate_weights(data)
         
         if self.verbose:
             print("Gate weights before entmax:", gate_weights)
@@ -126,10 +126,10 @@ class MoEUILModel(nn.Module):
 
         return aggregated_outputs
 
-    def get_gate_weights(self, data, epoch):
+    def get_gate_weights(self, data):
         batch_size = data.y.size(0)  # number of graphs in the batch
 
-        if epoch < self.train_after:
+        if self.current_epoch < self.train_after:
             # Uniform weights for each expert and each example
             return torch.full((batch_size, self.num_experts),
                             1.0 / self.num_experts,
