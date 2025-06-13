@@ -561,7 +561,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
 
     pbar = tqdm(loader, desc='Training MoEUIL', leave=False)
     for data in pbar:
-        batch_idx += 1
+
         data = data.to(device)
         optimizer.zero_grad()
 
