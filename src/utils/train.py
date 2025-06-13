@@ -575,6 +575,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     for data in pbar:
         if config['model']['parallel']:
             data = data.to_data_list()
+            print("batch is a list")
         
         data = data.to(device)
         optimizer.zero_grad()
