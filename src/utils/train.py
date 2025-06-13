@@ -579,7 +579,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
             print("batch is a list")
         else:
             data = data.to(device)
-            
+
         optimizer.zero_grad()
 
         # Step 3: Forward through MoE
@@ -675,7 +675,7 @@ def evaluate_moeuil(model, loader, device, metric_type, epoch, config):
         gate_weight_accumulator.append(gate_weights.cpu())
         
         # Logging
-        total_loss += aggregated_outputs['loss_total'] * batch_size
+        total_loss += aggregated_outputs['loss_total'].item() * batch_size
         total_ce_loss += aggregated_outputs['loss_ce'].item() * batch_size
         total_reg_loss += aggregated_outputs['loss_reg'].item() * batch_size
         total_sem_loss += aggregated_outputs['loss_sem'].item() * batch_size
