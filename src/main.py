@@ -68,6 +68,7 @@ def train(config):
         # Initialize model
         logger.logger.info(f"Initializing {config['model']['type']} model...")
         model = get_model(config, dataset_info)
+        model = torch.nn.DataParallel(model)
         model = model.to(device)
         
         if config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil':
