@@ -17,14 +17,14 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 128
+  batch_size: 32
   num_workers: 4
 
 # Model configuration
 model:
   type: "moe_uil"  # Options: GIN, GCN, GraphSAGE, moe, moe_uil, uil
-  parallel: true
-  hidden_dim: 64
+  parallel: false
+  hidden_dim: 32
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
@@ -62,5 +62,5 @@ gate:
   entmax_alpha: 1.3
   model: "GIN"
   depth: 2
-  hidden_dim: 64
+  hidden_dim: 32
   train_after: 10
