@@ -578,6 +578,8 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
         print(f"  edge_index shape: {data.edge_index.shape if hasattr(data, 'edge_index') else 'No edge_index'}")
         print(f"  y shape: {data.y.shape if hasattr(data, 'y') else 'No y'}")
         print(f"  batch shape: {data.batch.shape if hasattr(data, 'batch') else 'No batch'}")
+        print(f"  type: {type(data)}")
+        print(f"  data: {data}")
         
         data = data.to(device)
         optimizer.zero_grad()
