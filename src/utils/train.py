@@ -25,7 +25,8 @@ def train_epoch(model, loader, optimizer, dataset_info, device):
     all_outputs = []
     all_targets = []
     
-    for data in loader:
+    pbar = tqdm(loader, desc='Training', leave=False)
+    for data in pbar:
         data = data.to(device)
         optimizer.zero_grad()
         
@@ -58,8 +59,9 @@ def evaluate(model, loader, device, metric_type):
     all_outputs = []
     all_targets = []
     
+    pbar = tqdm(loader, desc='Evaluating', leave=False)
     with torch.no_grad():
-        for data in loader:
+        for data in pbar:
             data = data.to(device)
             
             # Forward pass
@@ -102,7 +104,8 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     # Track expert usage
     gate_weight_accumulator = []
 
-    for data in loader:
+    pbar = tqdm(loader, desc='Training MoE', leave=False)
+    for data in pbar:
         data = data.to(device)
         optimizer.zero_grad()
 
@@ -257,8 +260,9 @@ def evaluate_moe(model, loader, device, metric_type, epoch=1000):
     if verbose:
         print("Evaluating on validation/test set now...")
 
+    pbar = tqdm(loader, desc='Evaluating MoE', leave=False)
     with torch.no_grad():
-        for data in loader:
+        for data in pbar:
             data = data.to(device)
 
             # Forward pass
@@ -298,7 +302,8 @@ def train_epoch_uil(model, loader, optimizer, dataset_info, device, epoch, confi
     all_outputs = []
     all_targets = []
     
-    for data in loader:
+    pbar = tqdm(loader, desc='Training UIL', leave=False)
+    for data in pbar:
         data = data.to(device)
         optimizer.zero_grad()
         
@@ -318,7 +323,6 @@ def train_epoch_uil(model, loader, optimizer, dataset_info, device, epoch, confi
         total_reg_loss += output['loss_reg'].item() * data.num_graphs
         total_sem_loss += output['loss_sem'].item() * data.num_graphs
         total_str_loss += output['loss_str'].item() * data.num_graphs
-
     
     # Compute epoch metrics
     avg_loss = total_loss / len(loader.dataset)
@@ -353,8 +357,9 @@ def evaluate_uil(model, loader, device, metric_type):
     stable_edges_list = []
     verbose = model.module.verbose
     
+    pbar = tqdm(loader, desc='Evaluating UIL', leave=False)
     with torch.no_grad():
-        for data in loader:
+        for data in pbar:
             data = data.to(device)
             
             # Forward pass
@@ -554,7 +559,8 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     # Track expert usage
     gate_weight_accumulator = []
 
-    for data in loader:
+    pbar = tqdm(loader, desc='Training MoEUIL', leave=False)
+    for data in pbar:
         data = data.to(device)
         optimizer.zero_grad()
 
@@ -629,7 +635,8 @@ def evaluate_moeuil(model, loader, device, metric_type, epoch):
     # Track expert usage
     gate_weight_accumulator = []
 
-    for data in loader:
+    pbar = tqdm(loader, desc='Evaluating MoEUIL', leave=False)
+    for data in pbar:
         data = data.to(device)
 
         # Step 3: Forward through MoE
