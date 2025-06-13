@@ -585,10 +585,6 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
         gate_weights = gate_weights.squeeze(-1).T          # → (B, K)
         gate_weight_accumulator.append(gate_weights.cpu()) # accumulate across batches
 
-        loss = aggregated_outputs['loss_total']
-
-        loss.backward()
-
         # Check gradient flow to gate
         # for name, param in model.gate.named_parameters():
         #     if param.grad is not None:
