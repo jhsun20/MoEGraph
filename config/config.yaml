@@ -2,35 +2,40 @@
 
 # Experiment settings
 experiment:
-  name: "baseline_gnn"
-  seed: 42
+  name: "uil" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
-    num_samples: 5
-    epochs: 5
+    num_samples: 512
+    epochs: 50
+    verbose: false
+  seeds: [1, 2, 3]  # Add more seeds as needed
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODHIV"  # Specific dataset from GOOD
+  dataset_name: "GOODCMNIST"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 32
+  batch_size: 64
   num_workers: 4
 
 # Model configuration
 model:
-  type: "GIN"  # Options: GIN, GCN, GraphSAGE, moe
+  type: "uil"  # Options: GIN, GCN, GraphSAGE, moe, moe_uil, uil
   hidden_dim: 64
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
-
-# MoE specific configuration
-moe:
+  weight_str: 0.0
+  weight_sem: 1.0
+  weight_reg: 1.0
+  weight_ce: 1.0
+  weight_div: 0.5
+  weight_load: 1.0
   num_experts: 4
-  aggregation: "mean"  # Options: mean, majority_vote
+  aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
+
 
 # Training configuration
 training:
@@ -44,8 +49,29 @@ training:
 # Logging configuration
 logging:
   wandb:
-    enable: true
+    enable: false
     project: "graph_moe_ood"
     entity: "jhsun163-university-of-toronto"
   log_interval: 10
-  save_model: true 
+  save_model: true
+
+# Gating module configuration
+gate:
+  activation: "entmax"
+  entmax_alpha: 1.3
+  model: "GIN"
+  depth: 2
+  hidden_dim: 64
+  train_after: 10
+  sparsity_penalty: 0.0
+
+# Data Augmentation configuration
+augmentation:
+  enable: true
+  model_type: "GIN"  # Options: GIN, GCN, GraphSAGE
+  hidden_dim: 64
+  num_layers: 3
+  dropout: 0.0
+  pooling: "mean"  # Options: mean, sum, max
+  diversity: false
+  diversity_weight: 0.001

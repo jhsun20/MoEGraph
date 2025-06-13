@@ -23,6 +23,8 @@ logs/
 
 results/
 
+saved_results/
+
 datasets/
 
 __pycache__/

@@ -2,13 +2,14 @@
 
 # Experiment settings
 experiment:
-  name: "moe_nogate_noaug" # baseline_gnn or moe_nogate_noaug
-  seed: 42
+  name: "DEBUG" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: true
     num_samples: 1024
     epochs: 50
+    verbose: false
+  seeds: [1]  # Add more seeds as needed
 
 # Dataset configuration
 dataset:
@@ -16,21 +17,25 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 16
+  batch_size: 64
   num_workers: 4
 
 # Model configuration
 model:
-  type: "moe"  # Options: GIN, GCN, GraphSAGE, moe
+  type: "moe_uil"  # Options: GIN, GCN, GraphSAGE, moe, moe_uil, uil
   hidden_dim: 64
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
-
-# MoE specific configuration
-moe:
+  weight_str: 0.0
+  weight_sem: 1.0
+  weight_reg: 1.0
+  weight_ce: 2.0
+  weight_div: 0.5
+  weight_load: 1.0
   num_experts: 4
-  aggregation: "mean"  # Options: mean, majority_vote
+  aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
+
 
 # Training configuration
 training:
@@ -44,8 +49,18 @@ training:
 # Logging configuration
 logging:
   wandb:
-    enable: true
+    enable: false
     project: "graph_moe_ood"
     entity: "jhsun163-university-of-toronto"
   log_interval: 10
-  save_model: true 
+  save_model: true
+
+# Gating module configuration
+gate:
+  activation: "entmax"
+  entmax_alpha: 1.3
+  model: "GIN"
+  depth: 2
+  hidden_dim: 64
+  train_after: 5
+  sparsity_penalty: 0.0

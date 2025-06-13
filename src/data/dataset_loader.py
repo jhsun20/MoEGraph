@@ -29,11 +29,6 @@ def load_dataset(config):
     dataset_path = dataset_config['path']
     os.makedirs(dataset_path, exist_ok=True)
     
-    # Set random seed for reproducibility
-    torch.manual_seed(config['experiment']['seed'])
-    np.random.seed(config['experiment']['seed'])
-    random.seed(config['experiment']['seed'])
-    
     # Load dataset with error handling
     transform = NormalizeFeatures()
     dataset_name = dataset_config.get('dataset_name')

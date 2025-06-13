@@ -87,6 +87,12 @@ class Logger:
                 log_message += f" - Accuracy: {metrics['accuracy']:.4f}"
                 
             self.logger.info(log_message)
+            
+            # Find and log all loss-related keys in a single row
+            loss_keys = [key for key in metrics.keys() if 'loss' in key.lower()]
+            if loss_keys:
+                loss_str = " | ".join([f"{key}: {metrics[key]:.4f}" for key in sorted(loss_keys)])
+                self.logger.info(f"{phase} Losses: {loss_str}")
         else:
             # Fallback if primary metric is not available
             self.logger.info(f"Epoch {epoch} - {phase} - Metrics: {metrics}")
