@@ -592,8 +592,6 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
         #     else:
         #         print(f"Param {name} has no gradient!")
 
-        optimizer.step()
-
         # Logging
         total_loss += loss.item() * batch_size
         total_ce_loss += aggregated_outputs['loss_ce'].item() * batch_size
