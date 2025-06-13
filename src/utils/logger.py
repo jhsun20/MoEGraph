@@ -210,4 +210,12 @@ class Logger:
         self.metric_type = metric_type
         # Initialize best metric value based on metric type
         self.best_metric_value = float('-inf') if metric_type not in ['RMSE', 'MAE'] else float('inf')
-        self.logger.info(f"Set metric type to {metric_type}") 
+        self.logger.info(f"Set metric type to {metric_type}")
+    
+    def reset(self):
+        """
+        Reset the best checkpoint tracking for a new run.
+        """
+        self.best_checkpoint_path = None
+        self.best_metric_value = float('-inf') if self.metric_type not in ['RMSE', 'MAE'] else float('inf')
+        self.logger.info("Reset best checkpoint tracking for new run") 

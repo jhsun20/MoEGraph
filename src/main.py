@@ -69,6 +69,7 @@ def train(config):
             torch.cuda.manual_seed(seed)
         
         logger.logger.info(f"Running with seed: {seed}")
+        logger.reset()  # Reset best checkpoint tracking for new seed
 
         # Initialize model
         logger.logger.info(f"Initializing {config['model']['type']} model...")
@@ -219,8 +220,8 @@ def train(config):
             test_ood_metrics = evaluate(model, test_loader, device, metric_type)
             test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
         
-        logger.log_metrics(test_ood_metrics, epoch, phase="test_ood")
-        logger.log_metrics(test_id_metrics, epoch, phase="test_id")
+        logger.log_metrics(test_ood_metrics, phase="test_ood")
+        logger.log_metrics(test_id_metrics, phase="test_id")
 
         if (config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil') and verbose:
             logger.log_metrics({
