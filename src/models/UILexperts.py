@@ -207,27 +207,31 @@ class MoEUILModel(nn.Module):
 
         return load_balance_loss
     
-    def compute_classification_loss(self, pred, target):
+    def compute_classification_loss(self, pred, target, use_weights=False):
         """
-        Computes weighted cross-entropy loss with automatic class imbalance correction.
+        Computes cross-entropy loss with optional class imbalance correction.
         
         Args:
             pred (Tensor): Logits of shape (B, C)
             target (Tensor): Ground truth labels of shape (B,)
+            use_weights (bool): Whether to use class weights for imbalance correction. Default: False
         
         Returns:
-            Tensor: Weighted cross-entropy loss
+            Tensor: Cross-entropy loss
         """
-        # Compute class counts from current batch
-        num_classes = pred.size(1)
-        class_counts = torch.bincount(target, minlength=num_classes).float()
-        
-        # Avoid division by zero
-        class_counts[class_counts == 0] = 1.0
+        if use_weights:
+            # Compute class counts from current batch
+            num_classes = pred.size(1)
+            class_counts = torch.bincount(target, minlength=num_classes).float()
+            
+            # Avoid division by zero
+            class_counts[class_counts == 0] = 1.0
 
-        # Inverse frequency weighting normalized to sum to 1
-        weight = 1.0 / class_counts
-        weight = weight / weight.sum()
-        
-        return F.cross_entropy(pred, target, weight=weight.to(pred.device))
+            # Inverse frequency weighting normalized to sum to 1
+            weight = 1.0 / class_counts
+            weight = weight / weight.sum()
+            
+            return F.cross_entropy(pred, target, weight=weight.to(pred.device))
+        else:
+            return F.cross_entropy(pred, target)
 
