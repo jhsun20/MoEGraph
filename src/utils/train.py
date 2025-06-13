@@ -558,10 +558,9 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
 
     # Track expert usage
     gate_weight_accumulator = []
-    batch_idx = 0
+
     pbar = tqdm(loader, desc='Training MoEUIL', leave=False)
     for data in pbar:
-        print("Batch", batch_idx)
         batch_idx += 1
         data = data.to(device)
         optimizer.zero_grad()
