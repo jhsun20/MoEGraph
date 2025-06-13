@@ -6,12 +6,15 @@ import numpy as np
 from tqdm import tqdm
 import argparse
 import datetime
+from torch_geometric.nn import DataParallel
 
 from data.dataset_loader import load_dataset
 from models.model_factory import get_model
 from utils.logger import Logger
 from models.augmentor import Augmentor, MetaLearner
 from utils.train import train_epoch, train_epoch_moe, evaluate, evaluate_moe, train_epoch_uil, evaluate_uil, train_epoch_moeuil, evaluate_moeuil
+
+
 def train(config):
     """Main training function."""
     
@@ -70,7 +73,7 @@ def train(config):
         model = get_model(config, dataset_info)
         model = model.to(device)
         if config['model']['parallel']:
-            model = torch.nn.DataParallel(model)
+            model = DataParallel(model)
         
         if config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil':
             optimizer = torch.optim.Adam(
