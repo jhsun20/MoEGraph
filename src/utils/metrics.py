@@ -55,33 +55,26 @@ def compute_metrics(outputs, targets, metric_type='Accuracy', threshold=0.5):
         # Include accuracy as a secondary metric
         metrics['accuracy'] = accuracy_score(targets, preds)
     
+
     elif metric_type == 'ROC-AUC':
-        # ROC-AUC specific metrics
-        # print(outputs.shape)
-        # print(targets.shape)
-        if outputs.shape[1] > 2:  # Multi-class
+        #print("outputs", outputs, outputs.shape)
+        if outputs.shape[1] > 2:
+            # Multi-class (3 logits): apply softmax
             probs = softmax(outputs, axis=1)
-            try:
-                metrics['roc_auc'] = roc_auc_score(targets, probs, multi_class='ovo')
-            except ValueError:
-                # Fallback if ROC-AUC fails (e.g., only one class present)
-                print('valueerror multiclass')
-                metrics['roc_auc'] = 0.0
-        else:  # Binary
-            try:
-                # For binary classification, use the second column (probability of positive class)
-                if outputs.shape[1] == 2:
-                    probs = softmax(outputs, axis=1)[:, 1]  # Get probability of positive class
-                else:
-                    probs = outputs.squeeze()  # If already single column
-                # print(probs.shape)
-                metrics['roc_auc'] = roc_auc_score(targets, probs)
-            except ValueError:
-                print('valueerror binary')
-                metrics['roc_auc'] = 0.0
-        
-        # Include accuracy as a secondary metric
-        preds = np.argmax(outputs, axis=1)
+        else:
+            # Single output: assume binary case, apply sigmoid-like mapping
+            if outputs.shape[1] == 1:
+                # Binary classification with 1 logit (apply sigmoid)
+                probs = expit(outputs)
+            elif outputs.shape[1] == 2:
+                # Binary classification with 2 logits
+                probs = softmax(outputs, axis=1)[:, 1]  # prob of positive class
+        #print("probs", probs, probs.shape)
+        #print("targets", targets, targets.shape)
+        metrics['roc_auc'] = float(roc_auc_score(targets, probs, multi_class='ovo'))
+
+        # Also compute accuracy
+        preds = np.argmax(outputs, axis=1) if outputs.shape[1] > 1 else (outputs > 0.5).astype(int)
         metrics['accuracy'] = accuracy_score(targets, preds)
     
     elif metric_type == 'Average Precision':
