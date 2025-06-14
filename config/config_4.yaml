@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_6exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moeuil_diverse_balance_6exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -17,7 +17,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 32
+  batch_size: 64
   num_workers: 4
 
 # Model configuration
@@ -33,7 +33,7 @@ model:
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 1.0
-  weight_load: 0.0
+  weight_load: 1.0
   num_experts: 6
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
