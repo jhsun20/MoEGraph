@@ -308,6 +308,7 @@ if __name__ == "__main__":
     
     # Model arguments
     parser.add_argument('--model_type', type=str, help='Model type (GIN, GCN, GraphSAGE, etc.)')
+    parser.add_argument('--dataset_name', type=str, help='Dataset name')
     parser.add_argument('--num_experts', type=int, help='Number of experts for MoE models')
     
     # Training arguments
@@ -339,6 +340,8 @@ if __name__ == "__main__":
     # Override config with command line arguments if provided
     if args.model_type:
         config['model']['type'] = args.model_type
+    if args.dataset_name:
+        config['dataset']['dataset_name'] = args.dataset_name
     if args.num_experts:
         config['model']['num_experts'] = args.num_experts
     if args.lr:
