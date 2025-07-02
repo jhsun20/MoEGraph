@@ -49,7 +49,11 @@ class MoEUILModelSharedEncoder(nn.Module):
         
         if self.verbose:
             print("Gate weights before entmax:", gate_weights)
-        gate_weights = entmax_bisect(gate_weights, alpha=self.entmax_alpha, dim=-1)
+        
+        if self.entmax_alpha > 1:
+            gate_weights = entmax_bisect(gate_weights, alpha=self.entmax_alpha, dim=-1)
+        else:
+            gate_weights = F.softmax(gate_weights, dim=-1)
 
         if self.verbose:
             print("Gating weights:", gate_weights)
