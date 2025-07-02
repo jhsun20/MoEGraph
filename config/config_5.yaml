@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_sparse_8exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moeuil_diverse_sparse_4exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -13,7 +13,7 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODHIV"  # Specific dataset from GOOD
+  dataset_name: "GOODCMNIST"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
@@ -34,7 +34,7 @@ model:
   weight_ce: 1.0
   weight_div: 0.2
   weight_load: 0.0
-  num_experts: 8
+  num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 

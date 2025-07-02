@@ -6,6 +6,8 @@ CONFIGS=(
   "config/config_2.yaml"
   "config/config_3.yaml"
   "config/config_4.yaml"
+  "config/config_5.yaml"
+  "config/config_6.yaml"
 )
 
 # Run each config sequentially
