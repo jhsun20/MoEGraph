@@ -13,11 +13,11 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODHIV"  # Specific dataset from GOOD
+  dataset_name: "GOODCMNIST"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 32
+  batch_size: 64
   num_workers: 4
 
 # Model configuration
@@ -62,5 +62,5 @@ gate:
   entmax_alpha: 1.3
   model: "GIN"
   depth: 2
-  hidden_dim: 32
+  hidden_dim: 64
   train_after: 10
