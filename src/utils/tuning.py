@@ -13,15 +13,15 @@ def objective(trial, config_base, phase):
     # --- Suggest hyperparameters by phase ---
     if phase == 1:
         config['model']['num_experts'] = trial.suggest_int("num_experts", 2, 8)
-        config['model']['weight_str'] = trial.suggest_float("weight_str", 0.1, 1.0, log=True)
-        config['model']['weight_sem'] = trial.suggest_float("weight_sem", 0.1, 1.0, log=True)
+        config['model']['weight_str'] = trial.suggest_float("weight_str", 0.5, 1.0, log=True)
+        config['model']['weight_sem'] = trial.suggest_float("weight_sem", 0.5, 1.0, log=True)
         config['model']['weight_reg'] = trial.suggest_float("weight_reg", 0.1, 1.0, log=True)
         config['model']['weight_ce'] = 1.0
         if config['model']['weight_div'] == 0.0:
             config['model']['weight_div'] = 0.0
         else:
-            config['model']['weight_div'] = trial.suggest_float("weight_div", 0.01, 0.5, log=True)
-        config['model']['weight_load'] = trial.suggest_float("weight_load", 0.01, 0.5, log=True)
+            config['model']['weight_div'] = trial.suggest_float("weight_div", 0.01, 0.3, log=True)
+        config['model']['weight_load'] = trial.suggest_float("weight_load", 0.01, 0.3, log=True)
 
     elif phase == 2:
         config['training']['lr'] = trial.suggest_categorical("lr", [0.01, 0.001, 0.0001])
@@ -49,7 +49,10 @@ def run_optuna_tuning(config, phase, output_dir):
 
     pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=25)
     study = optuna.create_study(direction="maximize", pruner=pruner)
-    n_trials = config['experiment']['hyper_search']['n_trials']
+    if phase == 1:
+        n_trials = config['experiment']['hyper_search']['n_trials_1']
+    elif phase == 2:
+        n_trials = config['experiment']['hyper_search']['n_trials_2']
     config['experiment']['seeds'] = [random.randint(0, 10000)]
     study.optimize(lambda trial: objective(trial, config, phase), n_trials=n_trials)
 
