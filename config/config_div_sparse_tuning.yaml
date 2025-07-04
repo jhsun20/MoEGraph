@@ -12,8 +12,8 @@ experiment:
   seeds: [1,2,3]  # Add more seeds as needed
   hyper_search:
     enable: true
-    n_trials_1: 10
-    n_trials_2: 5
+    n_trials_1: 1
+    n_trials_2: 1
     test_after: true
 
 # Dataset configuration
