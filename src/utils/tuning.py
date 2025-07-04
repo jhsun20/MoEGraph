@@ -20,8 +20,8 @@ def objective(trial, config_base, phase):
         if config['model']['weight_div'] == 0.0:
             config['model']['weight_div'] = 0.0
         else:
-            config['model']['weight_div'] = trial.suggest_float("weight_div", 0.01, 1.0, log=True)
-        config['model']['weight_load'] = trial.suggest_float("weight_load", 0.01, 1.0, log=True)
+            config['model']['weight_div'] = trial.suggest_float("weight_div", 0.01, 0.5, log=True)
+        config['model']['weight_load'] = trial.suggest_float("weight_load", 0.01, 0.5, log=True)
 
     elif phase == 2:
         config['training']['lr'] = trial.suggest_categorical("lr", [0.01, 0.001, 0.0001])
