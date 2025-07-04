@@ -904,87 +904,91 @@ def train(config, trial=None):
                         logger.logger.info(f"Early stopping at epoch {epoch}")
                     break
         
-    if is_tuning:
+        if is_tuning:
+            del optimizer
+            if 'scaler' in locals():
+                del scaler  # if using AMP
+            gc.collect()
+            torch.cuda.empty_cache()
+            break
+
+        # Final evaluation on test sets
+        logger.logger.info("Evaluating on test sets...")
+        print("Evaluating on test sets...")
         del optimizer
         if 'scaler' in locals():
             del scaler  # if using AMP
         gc.collect()
         torch.cuda.empty_cache()
+
+        # Load the best model checkpoint before final evaluation
+        logger.logger.info("Loading best model checkpoint for final evaluation...")
+        logger.load_best_model(model)
+        
+        if config['model']['type'] == 'moe':
+            test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type)
+            test_id_metrics = evaluate_moe(model, id_test_loader, device, metric_type)
+        elif config['model']['type'] == 'uil':
+            print("Evaluating on test sets...")
+            test_ood_metrics = evaluate_uil(model, test_loader, device, metric_type)
+            test_id_metrics = evaluate_uil(model, id_test_loader, device, metric_type)
+        elif config['model']['type'] == 'moe_uil':
+            test_ood_metrics = evaluate_moeuil(model, test_loader, device, metric_type, epoch, config)
+            test_id_metrics = evaluate_moeuil(model, id_test_loader, device, metric_type, epoch, config)
+        else:
+            test_ood_metrics = evaluate(model, test_loader, device, metric_type)
+            test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
+        
+        # Log test metrics with the best epoch
+        logger.log_metrics(test_id_metrics, best_epoch, phase="test_id")
+        logger.log_metrics(test_ood_metrics, best_epoch, phase="test_ood")
+
+        # if (config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil'):
+        #     logger.log_metrics({
+        #             'loss_ce': round(test_ood_metrics.get('loss_ce', 0), 2),
+        #             'loss_reg': round(test_ood_metrics.get('loss_reg', 0), 2),
+        #             'loss_sem': round(test_ood_metrics.get('loss_sem', 0), 2),
+        #             'loss_str': round(test_ood_metrics.get('loss_str', 0), 2),
+        #             'loss_div': round(test_ood_metrics.get('loss_div', 0), 2),
+        #             'loss_load': round(test_ood_metrics.get('loss_load', 0), 2),
+        #             'avg_nodes_orig': round(test_ood_metrics.get('avg_nodes_orig', 0), 2),
+        #             'avg_edges_orig': round(test_ood_metrics.get('avg_edges_orig', 0), 2),
+        #             'avg_nodes_stable': round(test_ood_metrics.get('avg_nodes_stable', 0), 2),
+        #             'avg_edges_stable': round(test_ood_metrics.get('avg_edges_stable', 0), 2),
+        #         }, best_epoch, phase="test_ood")
+        
+        #     logger.log_metrics({
+        #             'loss_ce': round(test_id_metrics.get('loss_ce', 0), 2),
+        #             'loss_reg': round(test_id_metrics.get('loss_reg', 0), 2),
+        #             'loss_sem': round(test_id_metrics.get('loss_sem', 0), 2),
+        #             'loss_str': round(test_id_metrics.get('loss_str', 0), 2),
+        #             'loss_div': round(test_id_metrics.get('loss_div', 0), 2),
+        #             'loss_load': round(test_id_metrics.get('loss_load', 0), 2),
+        #             'avg_nodes_orig': round(test_id_metrics.get('avg_nodes_orig', 0), 2),
+        #             'avg_edges_orig': round(test_id_metrics.get('avg_edges_orig', 0), 2),
+        #             'avg_nodes_stable': round(test_id_metrics.get('avg_nodes_stable', 0), 2),
+        #             'avg_edges_stable': round(test_id_metrics.get('avg_edges_stable', 0), 2),
+        #         }, best_epoch, phase="test_id")
+            
+        all_test_ood_metrics.append(test_ood_metrics)
+        all_test_id_metrics.append(test_id_metrics)
+        all_train_metrics.append(train_metrics)
+        all_val_ood_metrics.append(val_metrics)
+        all_val_id_metrics.append(id_val_metrics)
+        # Save the final model checkpoint
+        if config['logging']['save_model']:
+            final_checkpoint_path = os.path.join(results_dir, f"final_model_checkpoint_{seed}.pth")
+            if config['model']['parallel']:
+                torch.save(model.module.state_dict(), final_checkpoint_path)
+            else:
+                torch.save(model.state_dict(), final_checkpoint_path)
+            logger.logger.info(f"Final model checkpoint saved to {final_checkpoint_path}")
+
+    if is_tuning:
         logger.close()
         elapsed_time = time.time() - start_time
         print(f"Trial completed in {elapsed_time:.2f} seconds.")
         return best_val_acc
-
-    # Final evaluation on test sets
-    logger.logger.info("Evaluating on test sets...")
-    del optimizer
-    if 'scaler' in locals():
-        del scaler  # if using AMP
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    # Load the best model checkpoint before final evaluation
-    logger.logger.info("Loading best model checkpoint for final evaluation...")
-    logger.load_best_model(model)
-    
-    if config['model']['type'] == 'moe':
-        test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type)
-        test_id_metrics = evaluate_moe(model, id_test_loader, device, metric_type)
-    elif config['model']['type'] == 'uil':
-        print("Evaluating on test sets...")
-        test_ood_metrics = evaluate_uil(model, test_loader, device, metric_type)
-        test_id_metrics = evaluate_uil(model, id_test_loader, device, metric_type)
-    elif config['model']['type'] == 'moe_uil':
-        test_ood_metrics = evaluate_moeuil(model, test_loader, device, metric_type, epoch, config)
-        test_id_metrics = evaluate_moeuil(model, id_test_loader, device, metric_type, epoch, config)
-    else:
-        test_ood_metrics = evaluate(model, test_loader, device, metric_type)
-        test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
-    
-    # Log test metrics with the best epoch
-    logger.log_metrics(test_id_metrics, best_epoch, phase="test_id")
-    logger.log_metrics(test_ood_metrics, best_epoch, phase="test_ood")
-
-    # if (config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil'):
-    #     logger.log_metrics({
-    #             'loss_ce': round(test_ood_metrics.get('loss_ce', 0), 2),
-    #             'loss_reg': round(test_ood_metrics.get('loss_reg', 0), 2),
-    #             'loss_sem': round(test_ood_metrics.get('loss_sem', 0), 2),
-    #             'loss_str': round(test_ood_metrics.get('loss_str', 0), 2),
-    #             'loss_div': round(test_ood_metrics.get('loss_div', 0), 2),
-    #             'loss_load': round(test_ood_metrics.get('loss_load', 0), 2),
-    #             'avg_nodes_orig': round(test_ood_metrics.get('avg_nodes_orig', 0), 2),
-    #             'avg_edges_orig': round(test_ood_metrics.get('avg_edges_orig', 0), 2),
-    #             'avg_nodes_stable': round(test_ood_metrics.get('avg_nodes_stable', 0), 2),
-    #             'avg_edges_stable': round(test_ood_metrics.get('avg_edges_stable', 0), 2),
-    #         }, best_epoch, phase="test_ood")
-    
-    #     logger.log_metrics({
-    #             'loss_ce': round(test_id_metrics.get('loss_ce', 0), 2),
-    #             'loss_reg': round(test_id_metrics.get('loss_reg', 0), 2),
-    #             'loss_sem': round(test_id_metrics.get('loss_sem', 0), 2),
-    #             'loss_str': round(test_id_metrics.get('loss_str', 0), 2),
-    #             'loss_div': round(test_id_metrics.get('loss_div', 0), 2),
-    #             'loss_load': round(test_id_metrics.get('loss_load', 0), 2),
-    #             'avg_nodes_orig': round(test_id_metrics.get('avg_nodes_orig', 0), 2),
-    #             'avg_edges_orig': round(test_id_metrics.get('avg_edges_orig', 0), 2),
-    #             'avg_nodes_stable': round(test_id_metrics.get('avg_nodes_stable', 0), 2),
-    #             'avg_edges_stable': round(test_id_metrics.get('avg_edges_stable', 0), 2),
-    #         }, best_epoch, phase="test_id")
-        
-    all_test_ood_metrics.append(test_ood_metrics)
-    all_test_id_metrics.append(test_id_metrics)
-    all_train_metrics.append(train_metrics)
-    all_val_ood_metrics.append(val_metrics)
-    all_val_id_metrics.append(id_val_metrics)
-    # Save the final model checkpoint
-    if config['logging']['save_model']:
-        final_checkpoint_path = os.path.join(results_dir, f"final_model_checkpoint_{seed}.pth")
-        if config['model']['parallel']:
-            torch.save(model.module.state_dict(), final_checkpoint_path)
-        else:
-            torch.save(model.state_dict(), final_checkpoint_path)
-        logger.logger.info(f"Final model checkpoint saved to {final_checkpoint_path}")
 
     # Calculate average accuracies for test OOD and test ID metrics
     avg_test_ood_primary_metric = sum(metrics[primary_metric] for metrics in all_test_ood_metrics) / len(all_test_ood_metrics)
