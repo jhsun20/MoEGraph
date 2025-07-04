@@ -24,6 +24,7 @@ def load_dataset(config):
     """
     dataset_config = config['dataset']
     debug_config = config['experiment']['debug']
+    is_tuning = config.get("experiment", {}).get("hyper_search", {}).get("enable", False)
     seed = config['experiment'].get('seed', 42)
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -132,13 +133,14 @@ def load_dataset(config):
     }
     
     # Improve print statements for better readability
-    print(f"\n=== Dataset Information ===")
-    print(f"Dataset: {dataset_name} ({shift_type})")
-    print(f"Task type: {task_type}")
-    print(f"Features: {meta_info.dim_node}, Classes: {meta_info.num_classes}")
-    print(f"Samples - Train: {len(datasets['train'])}, Val: {len(datasets['val'])}, ID Val: {len(datasets['id_val'])}, Test: {len(datasets['test'])}, ID Test: {len(datasets['id_test'])}")
-    print(f"Evaluation metric: {datasets['metric']}")
-    print(f"===============================\n")
+    if not is_tuning:
+        print(f"\n=== Dataset Information ===")
+        print(f"Dataset: {dataset_name} ({shift_type})")
+        print(f"Task type: {task_type}")
+        print(f"Features: {meta_info.dim_node}, Classes: {meta_info.num_classes}")
+        print(f"Samples - Train: {len(datasets['train'])}, Val: {len(datasets['val'])}, ID Val: {len(datasets['id_val'])}, Test: {len(datasets['test'])}, ID Test: {len(datasets['id_test'])}")
+        print(f"Evaluation metric: {datasets['metric']}")
+        print(f"===============================\n")
     
     return {
         'train_loader': train_loader,

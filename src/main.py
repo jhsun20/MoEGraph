@@ -12,293 +12,27 @@ from torch_geometric.nn import DataParallel
 from data.dataset_loader import load_dataset
 from models.model_factory import get_model
 from utils.logger import Logger
-from models.augmentor import Augmentor, MetaLearner
-from utils.train import train_epoch, train_epoch_moe, evaluate, evaluate_moe, train_epoch_uil, evaluate_uil, train_epoch_moeuil, evaluate_moeuil
+from utils.train import train
+from utils.tuning import run_optuna_tuning
 
 
-def train(config):
-    """Main training function."""
-    
-    # Set device
-    device = torch.device(config['experiment']['device'] if torch.cuda.is_available() else "cpu")
-    verbose = config['experiment']['debug']['verbose']
-    
-    # Initialize logger
-    logger = Logger(config)
-    logger.logger.info(f"Using device: {device}")
-    
-    # Load dataset
-    logger.logger.info("Loading dataset...")
-    data_loaders = load_dataset(config)
-    train_loader = data_loaders['train_loader']
-    val_loader = data_loaders['val_loader']  # OOD validation
-    test_loader = data_loaders['test_loader']  # OOD test
-    id_val_loader = data_loaders['id_val_loader']  # In-distribution validation
-    id_test_loader = data_loaders['id_test_loader']  # In-distribution test
-    dataset_info = data_loaders['dataset_info']
-    
-    logger.logger.info(f"Dataset info: {dataset_info}")
-    metric_type = dataset_info['metric']
-    logger.set_metric_type(metric_type)  # Set the metric type in logger
- 
-    # Get today's date and current time
-    now = datetime.datetime.now()
-    today_date = now.strftime("%Y-%m-%d")
-    current_time = now.strftime("%H-%M-%S")
+def run(config):
+    if config.get('experiment', {}).get('hyper_search', {}).get('enable', False):
+        now = datetime.datetime.now()
+        today_date = now.strftime("%Y-%m-%d")
+        current_time = now.strftime("%H-%M-%S")
 
-    # Prepare results directory with today's date and current time
-    results_dir = os.path.join(
-        "results",
-        f"{config['experiment']['name']}_{config['dataset']['dataset_name']}_{today_date}_{current_time}"
-    )
-    os.makedirs(results_dir, exist_ok=True)
+        output_dir = os.path.join(
+            "results",
+            f"{config['experiment']['name']}_{config['dataset']['dataset_name']}_tuning_{today_date}_{current_time}"
+        )
 
-    all_test_ood_metrics = []
-    all_test_id_metrics = []
-    all_train_metrics = []
-    all_val_ood_metrics = []
-    all_val_id_metrics = []
-    
-    # Iterate over each seed
-    for seed in config['experiment']['seeds']:
-        # Set new seed
-        torch.cuda.empty_cache()
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
-        
-        logger.logger.info(f"Running with seed: {seed}")
-        logger.reset()  # Reset best checkpoint tracking for new seed
+        os.makedirs(output_dir, exist_ok=True)
+        best_config = run_optuna_tuning(config=config, phase=1, output_dir=output_dir)
+        best_config = run_optuna_tuning(config=best_config, phase=2, output_dir=output_dir)
+    else:
+        train(config)
 
-        # Initialize model
-        logger.logger.info(f"Initializing {config['model']['type']} model...")
-        model = get_model(config, dataset_info)
-        if config['model']['parallel']:
-            model = DataParallel(model)
-        model = model.to(device)
-
-        if config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil':
-            optimizer = torch.optim.Adam(
-                model.parameters(),
-                lr=config['training']['lr'],
-                weight_decay=config['training']['weight_decay']
-            )
-        else:
-            meta_learner = None
-            augmentor = None
-            # Initialize optimizer
-            optimizer = torch.optim.Adam(
-                model.parameters(),
-                lr=config['training']['lr'],
-                weight_decay=config['training']['weight_decay']
-            )
-
-        
-        # Training loop
-        logger.logger.info("Starting training...")
-        best_val_acc = 0
-        patience_counter = 0
-        best_epoch = 0  # Track the best epoch
-        
-        # Adjust epochs if in debug mode
-        num_epochs = config['experiment']['debug']['epochs'] if config['experiment']['debug']['enable'] else config['training']['epochs']
-        
-        for epoch in range(1, num_epochs + 1):
-            # Train
-            if config['model']['type'] == 'moe':
-                train_metrics = train_epoch_moe(model, train_loader, optimizer, dataset_info, device, epoch, config, meta_learner, augmentor)
-                # Validate on OOD validation set
-                val_metrics = evaluate_moe(model, val_loader, device, metric_type, epoch)
-                # Validate on in-distribution validation set
-                id_val_metrics = evaluate_moe(model, id_val_loader, device, metric_type, epoch)
-            elif config['model']['type'] == 'uil':
-                train_metrics = train_epoch_uil(model, train_loader, optimizer, dataset_info, device, epoch, config)
-                # Validate on OOD validation set
-                val_metrics = evaluate_uil(model, val_loader, device, metric_type)
-                # Validate on in-distribution validation set
-                id_val_metrics = evaluate_uil(model, id_val_loader, device, metric_type)
-            elif config['model']['type'] == 'moe_uil':
-                train_metrics = train_epoch_moeuil(model, train_loader, optimizer, dataset_info, device, epoch, config)
-                # Validate on OOD validation set
-                val_metrics = evaluate_moeuil(model, val_loader, device, metric_type, epoch, config)
-                # Validate on in-distribution validation set
-                id_val_metrics = evaluate_moeuil(model, id_val_loader, device, metric_type, epoch, config)
-            else:
-                train_metrics = train_epoch(model, train_loader, optimizer, dataset_info, device)
-                # Validate on OOD validation set
-                val_metrics = evaluate(model, val_loader, device, metric_type)
-                # Validate on in-distribution validation set
-                id_val_metrics = evaluate(model, id_val_loader, device, metric_type)
-            
-            # Log metrics
-            logger.log_metrics(train_metrics, epoch, phase="train")
-            logger.log_metrics(val_metrics, epoch, phase="val_ood")
-            logger.log_metrics(id_val_metrics, epoch, phase="val_id")
-            
-            # Log individual losses if model is UIL
-            if (config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil') and verbose:
-                logger.log_metrics({
-                    'loss_ce': round(train_metrics.get('loss_ce', 0), 2),
-                    'loss_reg': round(train_metrics.get('loss_reg', 0), 2),
-                    'loss_sem': round(train_metrics.get('loss_sem', 0), 2),
-                    'loss_str': round(train_metrics.get('loss_str', 0), 2),
-                    'loss_div': round(train_metrics.get('loss_div', 0), 2),
-                    'loss_load': round(train_metrics.get('loss_load', 0), 2),
-                }, epoch, phase="train")
-                
-                # Log individual losses for validation
-                logger.log_metrics({
-                    'loss_ce': round(val_metrics.get('loss_ce', 0), 2),
-                    'loss_reg': round(val_metrics.get('loss_reg', 0), 2),
-                    'loss_sem': round(val_metrics.get('loss_sem', 0), 2),
-                    'loss_str': round(val_metrics.get('loss_str', 0), 2),
-                    'loss_div': round(val_metrics.get('loss_div', 0), 2),
-                    'loss_load': round(val_metrics.get('loss_load', 0), 2),
-                    'avg_nodes_orig': round(val_metrics.get('avg_nodes_orig', 0), 2),
-                    'avg_edges_orig': round(val_metrics.get('avg_edges_orig', 0), 2),
-                    'avg_nodes_stable': round(val_metrics.get('avg_nodes_stable', 0), 2),
-                    'avg_edges_stable': round(val_metrics.get('avg_edges_stable', 0), 2),
-                }, epoch, phase="val_ood")
-
-                # Log individual losses for in-distribution validation
-                logger.log_metrics({
-                    'loss_ce': round(id_val_metrics.get('loss_ce', 0), 2),
-                    'loss_reg': round(id_val_metrics.get('loss_reg', 0), 2),
-                    'loss_sem': round(id_val_metrics.get('loss_sem', 0), 2),
-                    'loss_str': round(id_val_metrics.get('loss_str', 0), 2),
-                    'loss_div': round(id_val_metrics.get('loss_div', 0), 2),
-                    'loss_load': round(id_val_metrics.get('loss_load', 0), 2),
-                    'avg_nodes_orig': round(id_val_metrics.get('avg_nodes_orig', 0), 2),
-                    'avg_edges_orig': round(id_val_metrics.get('avg_edges_orig', 0), 2),
-                    'avg_nodes_stable': round(id_val_metrics.get('avg_nodes_stable', 0), 2),
-                    'avg_edges_stable': round(id_val_metrics.get('avg_edges_stable', 0), 2),
-                }, epoch, phase="val_id")
-
-            # Early stopping based on OOD validation performance
-            # Use the appropriate metric for early stopping
-            primary_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
-            if primary_metric not in val_metrics:
-                primary_metric = list(val_metrics.keys())[0]  # Fallback to first metric
-                
-            current_metric = val_metrics[primary_metric]
-            # For error metrics like RMSE and MAE, lower is better
-            is_better = (current_metric < best_val_acc - config['training']['early_stopping']['min_delta']) if metric_type in ['RMSE', 'MAE'] else (current_metric > best_val_acc + config['training']['early_stopping']['min_delta'])
-            
-            if is_better:
-                best_val_acc = current_metric
-                patience_counter = 0
-                best_epoch = epoch  # Update best epoch
-                logger.save_model(model, epoch, val_metrics)
-            else:
-                patience_counter += 1
-                if patience_counter >= config['training']['early_stopping']['patience']:
-                    logger.logger.info(f"Early stopping at epoch {epoch}")
-                    break
-        
-        # Final evaluation on test sets
-        logger.logger.info("Evaluating on test sets...")
-        del optimizer
-        if 'scaler' in locals():
-            del scaler  # if using AMP
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        # Load the best model checkpoint before final evaluation
-        logger.logger.info("Loading best model checkpoint for final evaluation...")
-        logger.load_best_model(model)
-        
-        if config['model']['type'] == 'moe':
-            test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type)
-            test_id_metrics = evaluate_moe(model, id_test_loader, device, metric_type)
-        elif config['model']['type'] == 'uil':
-            print("Evaluating on test sets...")
-            test_ood_metrics = evaluate_uil(model, test_loader, device, metric_type)
-            test_id_metrics = evaluate_uil(model, id_test_loader, device, metric_type)
-        elif config['model']['type'] == 'moe_uil':
-            test_ood_metrics = evaluate_moeuil(model, test_loader, device, metric_type, epoch, config)
-            test_id_metrics = evaluate_moeuil(model, id_test_loader, device, metric_type, epoch, config)
-        else:
-            test_ood_metrics = evaluate(model, test_loader, device, metric_type)
-            test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
-        
-        # Log test metrics with the best epoch
-        logger.log_metrics(test_ood_metrics, best_epoch, phase="test_ood")
-        logger.log_metrics(test_id_metrics, best_epoch, phase="test_id")
-
-        if (config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil') and verbose:
-            logger.log_metrics({
-                    'loss_ce': round(test_ood_metrics.get('loss_ce', 0), 2),
-                    'loss_reg': round(test_ood_metrics.get('loss_reg', 0), 2),
-                    'loss_sem': round(test_ood_metrics.get('loss_sem', 0), 2),
-                    'loss_str': round(test_ood_metrics.get('loss_str', 0), 2),
-                    'loss_div': round(test_ood_metrics.get('loss_div', 0), 2),
-                    'loss_load': round(test_ood_metrics.get('loss_load', 0), 2),
-                    'avg_nodes_orig': round(test_ood_metrics.get('avg_nodes_orig', 0), 2),
-                    'avg_edges_orig': round(test_ood_metrics.get('avg_edges_orig', 0), 2),
-                    'avg_nodes_stable': round(test_ood_metrics.get('avg_nodes_stable', 0), 2),
-                    'avg_edges_stable': round(test_ood_metrics.get('avg_edges_stable', 0), 2),
-                }, best_epoch, phase="test_ood")
-        
-            logger.log_metrics({
-                    'loss_ce': round(test_id_metrics.get('loss_ce', 0), 2),
-                    'loss_reg': round(test_id_metrics.get('loss_reg', 0), 2),
-                    'loss_sem': round(test_id_metrics.get('loss_sem', 0), 2),
-                    'loss_str': round(test_id_metrics.get('loss_str', 0), 2),
-                    'loss_div': round(test_id_metrics.get('loss_div', 0), 2),
-                    'loss_load': round(test_id_metrics.get('loss_load', 0), 2),
-                    'avg_nodes_orig': round(test_id_metrics.get('avg_nodes_orig', 0), 2),
-                    'avg_edges_orig': round(test_id_metrics.get('avg_edges_orig', 0), 2),
-                    'avg_nodes_stable': round(test_id_metrics.get('avg_nodes_stable', 0), 2),
-                    'avg_edges_stable': round(test_id_metrics.get('avg_edges_stable', 0), 2),
-                }, best_epoch, phase="test_id")
-            
-        all_test_ood_metrics.append(test_ood_metrics)
-        all_test_id_metrics.append(test_id_metrics)
-        all_train_metrics.append(train_metrics)
-        all_val_ood_metrics.append(val_metrics)
-        all_val_id_metrics.append(id_val_metrics)
-        # Save the final model checkpoint
-        final_checkpoint_path = os.path.join(results_dir, f"final_model_checkpoint_{seed}.pth")
-        if config['model']['parallel']:
-            torch.save(model.module.state_dict(), final_checkpoint_path)
-        else:
-            torch.save(model.state_dict(), final_checkpoint_path)
-        logger.logger.info(f"Final model checkpoint saved to {final_checkpoint_path}")
-
-    # Save results after all seeds have been processed
-    if verbose:
-        print(f"All test OOD metrics: {all_test_ood_metrics}")
-        print(f"All test ID metrics: {all_test_id_metrics}")
-    # Calculate average accuracies for test OOD and test ID metrics
-    avg_test_ood_primary_metric = sum(metrics[primary_metric] for metrics in all_test_ood_metrics) / len(all_test_ood_metrics)
-    avg_test_id_primary_metric = sum(metrics[primary_metric] for metrics in all_test_id_metrics) / len(all_test_id_metrics)
-    results_path = os.path.join(results_dir, "metrics.yaml")
-    with open(results_path, 'w') as f:
-        yaml.dump({
-            'train': all_train_metrics,
-            'val_ood': all_val_ood_metrics,
-            'val_id': all_val_id_metrics,
-            'test_ood': all_test_ood_metrics,
-            'test_id': all_test_id_metrics,
-            'avg_test_ood_primary_metric': avg_test_ood_primary_metric,
-            'avg_test_id_primary_metric': avg_test_id_primary_metric
-        }, f)
-    
-    logger.logger.info(f"Results saved to {results_path}")
-    
-    # Save the configuration file used for the experiment
-    config_path = os.path.join(results_dir, "config_used.yaml")
-    with open(config_path, 'w') as config_file:
-        yaml.dump(config, config_file)
-    logger.logger.info(f"Configuration saved to {config_path}")
-
-    logger.close()
-    
-    return {
-        'test_ood': test_ood_metrics,
-        'test_id': test_id_metrics
-    }
 
 if __name__ == "__main__":
     # Parse command line arguments
@@ -306,31 +40,63 @@ if __name__ == "__main__":
     parser.add_argument('--config', type=str, default='config/config.yaml', 
                         help='Path to the config file')
     
+    # Experiment arguments
+    parser.add_argument('--experiment_name', type=str, help='Experiment name')
+    parser.add_argument('--device', type=str, help='Device to use (cuda, cpu)')
+    parser.add_argument('--debug_enable', type=str, help='Enable debug mode (true/false)')
+    parser.add_argument('--debug_num_samples', type=int, help='Number of samples to use in debug mode')
+    parser.add_argument('--debug_epochs', type=int, help='Number of epochs to run in debug mode')
+    parser.add_argument('--verbose', type=str, help='Enable verbose mode (true/false)')
+    parser.add_argument('--seeds', type=int, nargs='+', help='List of seeds for experiments')
+    parser.add_argument('--hyper_search_enable', type=str, help='Enable hyperparameter search (true/false)')
+    parser.add_argument('--hyper_search_n_trials', type=int, help='Number of trials for hyperparameter search')
+
+    # Dataset arguments
+    parser.add_argument('--dataset_name', type=str, help='Dataset name')
+    parser.add_argument('--task_type', type=str, help='Task type (e.g., graph_classification)')
+    parser.add_argument('--dataset_path', type=str, help='Path to datasets')
+    parser.add_argument('--shift_type', type=str, help='Shift type (covariate, concept, no_shift)')
+    parser.add_argument('--batch_size', type=int, help='Batch size')
+    parser.add_argument('--num_workers', type=int, help='Number of workers')
+
     # Model arguments
     parser.add_argument('--model_type', type=str, help='Model type (GIN, GCN, GraphSAGE, etc.)')
-    parser.add_argument('--dataset_name', type=str, help='Dataset name')
+    parser.add_argument('--parallel', type=str, help='Enable model parallelism (true/false)')
+    parser.add_argument('--hidden_dim', type=int, help='Hidden dimension size')
+    parser.add_argument('--num_layers', type=int, help='Number of layers')
+    parser.add_argument('--dropout', type=float, help='Dropout rate')
+    parser.add_argument('--pooling', type=str, help='Pooling method (mean, sum, max)')
+    parser.add_argument('--weight_str', type=float, help='Weight for structural loss')
+    parser.add_argument('--weight_sem', type=float, help='Weight for semantic loss')
+    parser.add_argument('--weight_reg', type=float, help='Weight for regularization loss')
+    parser.add_argument('--weight_ce', type=float, help='Weight for cross-entropy loss')
+    parser.add_argument('--weight_div', type=float, help='Weight for diversity loss')
+    parser.add_argument('--weight_load', type=float, help='Weight for load balancing loss')
     parser.add_argument('--num_experts', type=int, help='Number of experts for MoE models')
-    
+    parser.add_argument('--aggregation', type=str, help='Aggregation method (mean, majority_vote, weighted_mean)')
+
     # Training arguments
+    parser.add_argument('--epochs', type=int, help='Number of training epochs')
     parser.add_argument('--lr', type=float, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, help='Weight decay for optimizer')
-    parser.add_argument('--epochs', type=int, help='Number of training epochs')
-    parser.add_argument('--device', type=str, help='Device to use (cuda, cpu)')
-    parser.add_argument('--seed', type=int, help='Random seed for reproducibility')
-    
-    # Augmentation arguments
-    parser.add_argument('--augmentation', type=str, help='Enable or disable augmentation (true/false)')
-    parser.add_argument('--aug_strategy', type=str, help='Augmentation strategy')
-    parser.add_argument('--expert_specific_aug', type=str, help='Enable expert-specific augmentation (true/false)')
-    
-    # Gating arguments
-    parser.add_argument('--gating', type=str, help='Gating mechanism (soft_attention, learned_voting, etc.)')
-    
-    # Debug mode arguments
-    parser.add_argument('--debug', type=str, help='Enable debug mode (true/false)')
-    parser.add_argument('--debug_samples', type=int, help='Number of samples to use in debug mode')
-    parser.add_argument('--debug_epochs', type=int, help='Number of epochs to run in debug mode')
-    
+    parser.add_argument('--early_stopping_patience', type=int, help='Early stopping patience')
+    parser.add_argument('--early_stopping_min_delta', type=float, help='Minimum delta for early stopping')
+
+    # Logging arguments
+    parser.add_argument('--wandb_enable', type=str, help='Enable Weights & Biases logging (true/false)')
+    parser.add_argument('--wandb_project', type=str, help='Weights & Biases project name')
+    parser.add_argument('--wandb_entity', type=str, help='Weights & Biases entity name')
+    parser.add_argument('--log_interval', type=int, help='Logging interval')
+    parser.add_argument('--save_model', type=str, help='Save model (true/false)')
+
+    # Gating module arguments
+    parser.add_argument('--gate_activation', type=str, help='Gating activation function')
+    parser.add_argument('--entmax_alpha', type=float, help='Entmax alpha value')
+    parser.add_argument('--gate_model', type=str, help='Gating model type')
+    parser.add_argument('--gate_depth', type=int, help='Gating model depth')
+    parser.add_argument('--gate_hidden_dim', type=int, help='Gating model hidden dimension')
+    parser.add_argument('--train_after', type=int, help='Train gating model after specified epochs')
+
     args = parser.parse_args()
     
     # Load configuration
@@ -338,36 +104,101 @@ if __name__ == "__main__":
         config = yaml.safe_load(f)
     
     # Override config with command line arguments if provided
-    if args.model_type:
-        config['model']['type'] = args.model_type
+    if args.experiment_name:
+        config['experiment']['name'] = args.experiment_name
+    if args.device:
+        config['experiment']['device'] = args.device
+    if args.debug_enable:
+        config['experiment']['debug']['enable'] = args.debug_enable.lower() == 'true'
+    if args.debug_num_samples:
+        config['experiment']['debug']['num_samples'] = args.debug_num_samples
+    if args.debug_epochs:
+        config['experiment']['debug']['epochs'] = args.debug_epochs
+    if args.verbose:
+        config['experiment']['debug']['verbose'] = args.verbose.lower() == 'true'
+    if args.seeds:
+        config['experiment']['seeds'] = args.seeds
+    if args.hyper_search_enable:
+        config['experiment']['hyper_search']['enable'] = args.hyper_search_enable.lower() == 'true'
+    if args.hyper_search_n_trials:
+        config['experiment']['hyper_search']['n_trials'] = args.hyper_search_n_trials
+
     if args.dataset_name:
         config['dataset']['dataset_name'] = args.dataset_name
+    if args.task_type:
+        config['dataset']['task_type'] = args.task_type
+    if args.dataset_path:
+        config['dataset']['path'] = args.dataset_path
+    if args.shift_type:
+        config['dataset']['shift_type'] = args.shift_type
+    if args.batch_size:
+        config['dataset']['batch_size'] = args.batch_size
+    if args.num_workers:
+        config['dataset']['num_workers'] = args.num_workers
+
+    if args.model_type:
+        config['model']['type'] = args.model_type
+    if args.parallel:
+        config['model']['parallel'] = args.parallel.lower() == 'true'
+    if args.hidden_dim:
+        config['model']['hidden_dim'] = args.hidden_dim
+    if args.num_layers:
+        config['model']['num_layers'] = args.num_layers
+    if args.dropout:
+        config['model']['dropout'] = args.dropout
+    if args.pooling:
+        config['model']['pooling'] = args.pooling
+    if args.weight_str:
+        config['model']['weight_str'] = args.weight_str
+    if args.weight_sem:
+        config['model']['weight_sem'] = args.weight_sem
+    if args.weight_reg:
+        config['model']['weight_reg'] = args.weight_reg
+    if args.weight_ce:
+        config['model']['weight_ce'] = args.weight_ce
+    if args.weight_div:
+        config['model']['weight_div'] = args.weight_div
+    if args.weight_load:
+        config['model']['weight_load'] = args.weight_load
     if args.num_experts:
         config['model']['num_experts'] = args.num_experts
+    if args.aggregation:
+        config['model']['aggregation'] = args.aggregation
+
+    if args.epochs:
+        config['training']['epochs'] = args.epochs
     if args.lr:
         config['training']['lr'] = args.lr
     if args.weight_decay:
         config['training']['weight_decay'] = args.weight_decay
-    if args.epochs:
-        config['training']['epochs'] = args.epochs
-    if args.device:
-        config['experiment']['device'] = args.device
-    if args.seed:
-        config['experiment']['seed'] = args.seed
-    if args.augmentation:
-        config['augmentation']['enable'] = args.augmentation.lower() == 'true'
-    if args.aug_strategy:
-        config['augmentation']['strategy'] = args.aug_strategy
-    if args.expert_specific_aug:
-        config['augmentation']['expert_specific'] = args.expert_specific_aug.lower() == 'true'
-    if args.gating:
-        config['model']['gating'] = args.gating
-    if args.debug:
-        config['experiment']['debug']['enable'] = args.debug.lower() == 'true'
-    if args.debug_samples:
-        config['experiment']['debug']['num_samples'] = args.debug_samples
-    if args.debug_epochs:
-        config['experiment']['debug']['epochs'] = args.debug_epochs
+    if args.early_stopping_patience:
+        config['training']['early_stopping']['patience'] = args.early_stopping_patience
+    if args.early_stopping_min_delta:
+        config['training']['early_stopping']['min_delta'] = args.early_stopping_min_delta
+
+    if args.wandb_enable:
+        config['logging']['wandb']['enable'] = args.wandb_enable.lower() == 'true'
+    if args.wandb_project:
+        config['logging']['wandb']['project'] = args.wandb_project
+    if args.wandb_entity:
+        config['logging']['wandb']['entity'] = args.wandb_entity
+    if args.log_interval:
+        config['logging']['log_interval'] = args.log_interval
+    if args.save_model:
+        config['logging']['save_model'] = args.save_model.lower() == 'true'
+
+    if args.gate_activation:
+        config['gate']['activation'] = args.gate_activation
+    if args.entmax_alpha:
+        config['gate']['entmax_alpha'] = args.entmax_alpha
+    if args.gate_model:
+        config['gate']['model'] = args.gate_model
+    if args.gate_depth:
+        config['gate']['depth'] = args.gate_depth
+    if args.gate_hidden_dim:
+        config['gate']['hidden_dim'] = args.gate_hidden_dim
+    if args.train_after:
+        config['gate']['train_after'] = args.train_after
     
     # Run training
-    train(config) 
+    run(config) 

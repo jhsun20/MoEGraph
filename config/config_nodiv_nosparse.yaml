@@ -2,18 +2,21 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_sparse_8exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moeuil_nodiverse_nosparse" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
     num_samples: 512
     epochs: 50
     verbose: false
-  seeds: [1,2,3]  # Add more seeds as needed
+  seeds: [1, 2, 3]  # Add more seeds as needed
+  hyper_search:
+    enable: false
+    n_trials: 10
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODCMNIST"  # Specific dataset from GOOD
+  dataset_name: "GOODHIV"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
@@ -32,9 +35,9 @@ model:
   weight_sem: 1.0
   weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 0.2
-  weight_load: 0.0
-  num_experts: 8
+  weight_div: 0.0
+  weight_load: 1.0
+  num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
@@ -50,16 +53,16 @@ training:
 # Logging configuration
 logging:
   wandb:
-    enable: false
+    enable: true
     project: "graph_moe_ood"
     entity: "jhsun163-university-of-toronto"
   log_interval: 10
-  save_model: true
+  save_model: false
 
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.3
+  entmax_alpha: 1.01
   model: "GIN"
   depth: 2
   hidden_dim: 64

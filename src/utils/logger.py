@@ -65,7 +65,7 @@ class Logger:
         with open(os.path.join(self.log_dir, "config.yaml"), 'w') as f:
             yaml.dump(config, f)
         
-        self.logger.info(f"Logger initialized. Logs will be saved to {self.log_dir}")
+        #self.logger.info(f"Logger initialized. Logs will be saved to {self.log_dir}")
     
     def log_metrics(self, metrics, epoch, phase="train"):
         """
@@ -164,9 +164,6 @@ class Logger:
         if is_better:
             self.best_metric_value = primary_metric_value
             self.best_checkpoint_path = checkpoint_path
-            self.logger.info(f"New best model saved with {primary_metric_name}: {primary_metric_value:.4f}")
-        else:
-            self.logger.info(f"Model checkpoint saved to {checkpoint_path}")
     
     def load_best_model(self, model):
         """
@@ -210,7 +207,7 @@ class Logger:
         self.metric_type = metric_type
         # Initialize best metric value based on metric type
         self.best_metric_value = float('-inf') if metric_type not in ['RMSE', 'MAE'] else float('inf')
-        self.logger.info(f"Set metric type to {metric_type}")
+        #self.logger.info(f"Set metric type to {metric_type}")
     
     def reset(self):
         """
@@ -218,4 +215,4 @@ class Logger:
         """
         self.best_checkpoint_path = None
         self.best_metric_value = float('-inf') if self.metric_type not in ['RMSE', 'MAE'] else float('inf')
-        self.logger.info("Reset best checkpoint tracking for new run") 
+        #self.logger.info("Reset best checkpoint tracking for new run") 

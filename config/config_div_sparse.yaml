@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_sparse_8exp" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moeuil_diverse_sparse" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -10,6 +10,9 @@ experiment:
     epochs: 50
     verbose: false
   seeds: [1,2,3]  # Add more seeds as needed
+  hyper_search:
+    enable: false
+    n_trials: 10
 
 # Dataset configuration
 dataset:
@@ -34,7 +37,7 @@ model:
   weight_ce: 1.0
   weight_div: 0.2
   weight_load: 0.0
-  num_experts: 8
+  num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 

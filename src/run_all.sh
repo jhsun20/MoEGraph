@@ -2,12 +2,8 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-  "config/config_1.yaml"
-  "config/config_2.yaml"
-  "config/config_3.yaml"
-  "config/config_4.yaml"
-  "config/config_5.yaml"
-  "config/config_6.yaml"
+  "config/config_nodiv_nosparse_tuning.yaml"
+  "config/config_div_sparse_tuning.yaml"
 )
 
 # Run each config sequentially

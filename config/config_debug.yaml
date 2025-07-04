@@ -6,10 +6,13 @@ experiment:
   device: "cuda"  # or "cpu"
   debug:
     enable: true
-    num_samples: 4
-    epochs: 10
-    verbose: true
-  seeds: [1, 2]  # Add more seeds as needed
+    num_samples: 64
+    epochs: 5
+    verbose: false
+  seeds: [42]  # Add more seeds as needed
+  hyper_search:
+    enable: true
+    n_trials: 2
 
 # Dataset configuration
 dataset:
@@ -17,7 +20,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 2
+  batch_size: 32
   num_workers: 4
 
 # Model configuration
@@ -34,7 +37,7 @@ model:
   weight_ce: 1.0
   weight_div: 1.0
   weight_load: 1.0
-  num_experts: 2
+  num_experts: 3
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
@@ -59,8 +62,8 @@ logging:
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.01
+  entmax_alpha: 1.1
   model: "GIN"
   depth: 2
   hidden_dim: 32
-  train_after: -100
+  train_after: 5
