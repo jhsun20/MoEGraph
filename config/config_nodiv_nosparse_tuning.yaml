@@ -13,6 +13,7 @@ experiment:
   hyper_search:
     enable: true
     n_trials: 10
+    test_after: true
 
 # Dataset configuration
 dataset:
