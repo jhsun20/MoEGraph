@@ -606,14 +606,7 @@ class Experts(nn.Module):
         edge_mask_c = edge_mask.clamp(min=eps, max=1 - eps)
         feat_mask_c = feat_mask.clamp(min=eps, max=1 - eps)
 
-        node_entropy = -(node_mask_c * torch.log(node_mask_c) +
-                        (1 - node_mask_c) * torch.log(1 - node_mask_c)).mean()
-        edge_entropy = -(edge_mask_c * torch.log(edge_mask_c) +
-                        (1 - edge_mask_c) * torch.log(1 - edge_mask_c)).mean()
-        feat_entropy = -(feat_mask_c * torch.log(feat_mask_c) +
-                        (1 - feat_mask_c) * torch.log(1 - feat_mask_c)).mean()
-
-        return node_sparsity + edge_sparsity + feat_sparsity + node_entropy + edge_entropy + feat_entropy
+        return node_sparsity + edge_sparsity + feat_sparsity
 
     def compute_semantic_invariance_loss(self, h_stable, h_orig):
         return F.mse_loss(h_stable, h_orig)
