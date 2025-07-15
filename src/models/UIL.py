@@ -594,17 +594,24 @@ class Experts(nn.Module):
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask):
         rho = torch.clamp(self.rho, 0.0, 1.0)
+        eps = 1e-6
 
+        # Sparsity (L2 deviation from target rho)
         node_sparsity = (node_mask.mean() - rho).pow(2)
         edge_sparsity = (edge_mask.mean() - rho).pow(2)
         feat_sparsity = ((feat_mask.mean(dim=0)) - rho).pow(2).mean()
 
-        node_entropy = -(node_mask * torch.log(node_mask + 1e-8) +
-                         (1 - node_mask) * torch.log(1 - node_mask + 1e-8)).mean()
-        edge_entropy = -(edge_mask * torch.log(edge_mask + 1e-8) +
-                         (1 - edge_mask) * torch.log(1 - edge_mask + 1e-8)).mean()
-        feat_entropy = -(feat_mask * torch.log(feat_mask + 1e-8) +
-                         (1 - feat_mask) * torch.log(1 - feat_mask + 1e-8)).mean()
+        # Entropy (use clamped values to avoid log(0))
+        node_mask_c = node_mask.clamp(min=eps, max=1 - eps)
+        edge_mask_c = edge_mask.clamp(min=eps, max=1 - eps)
+        feat_mask_c = feat_mask.clamp(min=eps, max=1 - eps)
+
+        node_entropy = -(node_mask_c * torch.log(node_mask_c) +
+                        (1 - node_mask_c) * torch.log(1 - node_mask_c)).mean()
+        edge_entropy = -(edge_mask_c * torch.log(edge_mask_c) +
+                        (1 - edge_mask_c) * torch.log(1 - edge_mask_c)).mean()
+        feat_entropy = -(feat_mask_c * torch.log(feat_mask_c) +
+                        (1 - feat_mask_c) * torch.log(1 - feat_mask_c)).mean()
 
         return node_sparsity + edge_sparsity + feat_sparsity + node_entropy + edge_entropy + feat_entropy
 
