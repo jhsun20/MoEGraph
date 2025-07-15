@@ -41,7 +41,6 @@ def load_dataset(config):
     shift_type = dataset_config.get('shift_type')
 
     if dataset_name[:4] == 'GOOD':
-        print('DATASET NAME: ', dataset_name)
         class_name = eval(f'GOOD{dataset_name[4:]}')
         datasets, meta_info = class_name.load(dataset_root=dataset_path,
                                               shift=shift_type)

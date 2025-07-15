@@ -14,9 +14,9 @@ from torch_geometric.data import InMemoryDataset, extract_zip
 from torch_geometric.utils import from_networkx
 from tqdm import tqdm
 
-from GOOD import register
-from GOOD.utils.synthetic_data.BA3_loc import *
-from GOOD.utils.synthetic_data import synthetic_structsim
+# from GOOD import register
+# from GOOD.utils.synthetic_data.BA3_loc import *
+# from GOOD.utils.synthetic_data import synthetic_structsim
 
 
 class GOODMotif(InMemoryDataset):

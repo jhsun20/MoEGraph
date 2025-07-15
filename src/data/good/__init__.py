@@ -7,3 +7,6 @@ from .good_twitch import GOODTwitch
 from .good_cmnist import GOODCMNIST
 from .good_hiv import GOODHIV
 from .good_cbas import GOODCBAS
+from .good_pcba import GOODPCBA
+from .good_zinc import GOODZINC
+from .good_motif import GOODMotif
