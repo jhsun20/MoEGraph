@@ -33,13 +33,13 @@ model:
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
-  weight_str: 0.0
-  weight_sem: 1.0
-  weight_reg: 0.96
+  weight_str: 1.0
+  weight_sem: 0.0
+  weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 0.13
-  weight_load: 0.15
-  num_experts: 2
+  weight_div: 0.1
+  weight_load: 0.1
+  num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
@@ -68,4 +68,4 @@ gate:
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 20
+  train_after: 10

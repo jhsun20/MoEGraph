@@ -11,7 +11,7 @@ experiment:
     verbose: false
   seeds: [42]  # Add more seeds as needed
   hyper_search:
-    enable: true
+    enable: false
     n_trials: 2
     test_after: true
 

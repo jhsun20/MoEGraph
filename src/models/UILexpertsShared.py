@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.UIL import UILModelSharedEncoder
+from models.UIL import UILModelSharedEncoder, Experts
 from models.gnn_models import GIN
 from entmax import entmax15, entmax_bisect
 from torch_geometric.data import Batch
@@ -32,7 +32,8 @@ class MoEUILModelSharedEncoder(nn.Module):
         pooling = config['model']['pooling']
 
         # Instantiate single shared encoder model (contains multiple experts internally)
-        self.shared_model = UILModelSharedEncoder(config, dataset_info)
+        #self.shared_model = UILModelSharedEncoder(config, dataset_info)
+        self.shared_model = Experts(config, dataset_info)
 
         # Instantiate gating mechanism
         gate_hidden_dim = config['gate']['hidden_dim']
@@ -143,6 +144,7 @@ class MoEUILModelSharedEncoder(nn.Module):
                 'loss_div': diversity_loss,
                 'loss_load': load_balance_loss,
                 'gate_weights': gate_weights,
+                'rho': shared_output['rho'],
                 'expert_logits': expert_logits  # Keep expert logits for analysis
             }
 
