@@ -349,7 +349,7 @@ class GOODPCBA(InMemoryDataset):
             torch.save((data, slices), self.processed_paths[i])
 
     @staticmethod
-    def load(dataset_root: str, domain: str, shift: str = 'no_shift', generate: bool = False):
+    def load(dataset_root: str, domain: str = 'scaffold', shift: str = 'no_shift', generate: bool = False):
         r"""
         A staticmethod for dataset loading. This method instantiates dataset class, constructing train, id_val, id_test,
         ood_val (val), and ood_test (test) splits. Besides, it collects several dataset meta information for further
