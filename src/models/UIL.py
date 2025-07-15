@@ -594,15 +594,32 @@ class Experts(nn.Module):
             return F.cross_entropy(pred, target)
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask):
-            rho = torch.clamp(self.rho, 0.0, 1.0)
-            eps = 1e-6
+        rho = torch.clamp(self.rho, 0.0, 1.0)
 
-            # Sparsity (L2 deviation from target rho)
-            node_sparsity = (node_mask.mean() - rho).pow(2)
-            edge_sparsity = (edge_mask.mean() - rho).pow(2)
-            feat_sparsity = ((feat_mask.mean(dim=0)) - rho).pow(2).mean()
+        node_ratio = node_mask.mean()
+        edge_ratio = edge_mask.mean()
+        feat_ratio = feat_mask.mean()
+        node_dev = (node_ratio - rho).pow(2)
+        edge_dev = (edge_ratio - rho).pow(2)
+        feat_dev = (feat_ratio - rho).pow(2)
 
-            return node_sparsity + edge_sparsity + feat_sparsity
+        node_l0 = (node_mask > 0).float().mean()
+        edge_l0 = (edge_mask > 0).float().mean()
+        feat_l0 = (feat_mask > 0).float().mean()
+        l0_dev = (node_l0 - rho).pow(2) + (edge_l0 - rho).pow(2) + (feat_l0 - rho).pow(2)
+
+        return node_dev + edge_dev + feat_dev + l0_dev
+    
+    # def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask):
+    #     rho = torch.clamp(self.rho, 0.0, 1.0)
+    #     eps = 1e-6
+
+    #     # Sparsity (L2 deviation from target rho)
+    #     node_sparsity = (node_mask.mean() - rho).pow(2)
+    #     edge_sparsity = (edge_mask.mean() - rho).pow(2)
+    #     feat_sparsity = ((feat_mask.mean(dim=0)) - rho).pow(2).mean()
+
+    #     return node_sparsity + edge_sparsity + feat_sparsity
 
     def compute_semantic_invariance_loss(self, h_stable, h_orig):
         return F.mse_loss(h_stable, h_orig)
