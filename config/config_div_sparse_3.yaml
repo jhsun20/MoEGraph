@@ -18,7 +18,7 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODTwitter"  # Specific dataset from GOOD
+  dataset_name: "GOODZinc"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
