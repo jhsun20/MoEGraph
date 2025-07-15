@@ -19,7 +19,6 @@ from GOOD.utils.synthetic_data.BA3_loc import *
 from GOOD.utils.synthetic_data import synthetic_structsim
 
 
-#@register.dataset_register
 class GOODMotif(InMemoryDataset):
     r"""
     The GOOD-Motif dataset motivated by `Spurious-Motif

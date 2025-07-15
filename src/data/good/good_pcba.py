@@ -55,10 +55,6 @@ class DomainGetter():
         return number_atom
 
 
-from GOOD import register
-
-
-@register.dataset_register
 class GOODPCBA(InMemoryDataset):
     r"""
     The GOOD-PCBA dataset. Adapted from `MoleculeNet

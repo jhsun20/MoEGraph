@@ -57,10 +57,6 @@ class DomainGetter():
         return number_atom
 
 
-from GOOD import register
-
-
-#@register.dataset_register
 class GOODZINC(InMemoryDataset):
     r"""
     The GOOD-ZINC dataset adapted from `ZINC database
