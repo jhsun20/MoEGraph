@@ -638,13 +638,13 @@ class Experts(nn.Module):
             for lbl in unique_labels:
                 indices = (labels == lbl).nonzero(as_tuple=False).squeeze()
                 if indices.numel() < 2:
-                    print(f"Label {lbl} has less than 2 embeddings, skipping.")
+                    #print(f"Label {lbl} has less than 2 embeddings, skipping.")
                     continue
                 h_group = h_stable[indices]
-                print(f"Processing label {lbl} with {h_group.size(0)} embeddings.")
+                #print(f"Processing label {lbl} with {h_group.size(0)} embeddings.")
                 for i in range(h_group.size(0)):
                     for j in range(i + 1, h_group.size(0)):
-                        print(f"Comparing embeddings {i} and {j} for label {lbl}.")
+                        #print(f"Comparing embeddings {i} and {j} for label {lbl}.")
                         loss += F.mse_loss(h_group[i], h_group[j])
             return loss
 
