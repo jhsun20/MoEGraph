@@ -542,8 +542,8 @@ class Experts(nn.Module):
                 reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask)
                 reg_loss_list.append(reg_loss)
 
-                sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig)
-                #sem_loss = torch.tensor(0.0, device=expert_logit.device)
+                #sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig)
+                sem_loss = torch.tensor(0.0, device=expert_logit.device)
                 sem_loss_list.append(sem_loss)
 
                 str_loss = self.compute_structural_invariance_loss(expert_h_stable, target, edge_index, batch, expert_node_mask, expert_edge_mask)
@@ -595,25 +595,26 @@ class Experts(nn.Module):
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask):
         rho = torch.clamp(self.rho, 0.0, 1.0)
-        eps = 1e-6
 
-        # Sparsity (L2 deviation from target rho)
-        node_sparsity = (node_mask.mean() - rho).pow(2)
-        edge_sparsity = (edge_mask.mean() - rho).pow(2)
-        feat_sparsity = ((feat_mask.mean(dim=0)) - rho).pow(2).mean()
+        node_ratio = node_mask.mean()
+        edge_ratio = edge_mask.mean()
+        feat_ratio = feat_mask.mean()
+        node_dev = (node_ratio - rho).pow(2)
+        edge_dev = (edge_ratio - rho).pow(2)
+        feat_dev = (feat_ratio - rho).pow(2)
 
-        # Entropy (use clamped values to avoid log(0))
-        node_mask_c = node_mask.clamp(min=eps, max=1 - eps)
-        edge_mask_c = edge_mask.clamp(min=eps, max=1 - eps)
-        feat_mask_c = feat_mask.clamp(min=eps, max=1 - eps)
+        node_l0 = (node_mask > 0).float().mean()
+        edge_l0 = (edge_mask > 0).float().mean()
+        feat_l0 = (feat_mask > 0).float().mean()
+        l0_dev = (node_l0 - rho).pow(2) + (edge_l0 - rho).pow(2) + (feat_l0 - rho).pow(2)
 
-        return node_sparsity + edge_sparsity + feat_sparsity
+        return node_dev + edge_dev + feat_dev + l0_dev
 
     def compute_semantic_invariance_loss(self, h_stable, h_orig):
         return F.mse_loss(h_stable, h_orig)
 
 
-    def compute_structural_invariance_loss(self, h_stable, labels, edge_index, batch, node_mask, edge_mask, mode="laplacian", topk=10):
+    def compute_structural_invariance_loss(self, h_stable, labels, edge_index, batch, node_mask, edge_mask, mode="embedding", topk=10):
         """
         Computes structural invariance loss.
         
@@ -635,19 +636,19 @@ class Experts(nn.Module):
         unique_labels = labels.unique()
 
         if mode == "embedding":
-            # === Embedding-based structural invariance ===
+            # === Embedding-based structural invariance (variance version) ===
+            count = 0
             for lbl in unique_labels:
                 indices = (labels == lbl).nonzero(as_tuple=False).squeeze()
                 if indices.numel() < 2:
-                    #print(f"Label {lbl} has less than 2 embeddings, skipping.")
                     continue
-                h_group = h_stable[indices]
-                #print(f"Processing label {lbl} with {h_group.size(0)} embeddings.")
-                for i in range(h_group.size(0)):
-                    for j in range(i + 1, h_group.size(0)):
-                        #print(f"Comparing embeddings {i} and {j} for label {lbl}.")
-                        loss += F.mse_loss(h_group[i], h_group[j])
-            return loss
+                h_group = h_stable[indices]  # (B_lbl, D)
+                mean = h_group.mean(dim=0)   # (D,)
+                var = ((h_group - mean) ** 2).mean()  # scalar
+                loss += var
+                count += 1
+
+            return loss / count if count > 0 else torch.tensor(0.0, device=device)
 
         elif mode == "laplacian":
             # === Laplacian spectrum-based structural invariance ===
@@ -658,16 +659,24 @@ class Experts(nn.Module):
 
             spectra_by_label = {}
 
-            for i in range(h_stable.size(0)):  # loop over graphs in batch
+            for i in range(h_stable.size(0)):
                 A = adj_dense[i]
                 if A.size(0) != A.size(1):
-                    # print(f"Skipping graph {i} due to non-square adjacency matrix.")
                     continue
+
                 deg = A.sum(dim=-1)
                 D = torch.diag(deg)
                 L = D - A
-                eigvals = torch.linalg.eigvalsh(L)
-                topk_eigs = eigvals[:topk]
+
+                try:
+                    eigvals = torch.linalg.eigvalsh(L)
+                    topk_eigs = eigvals[:topk]
+                except RuntimeError as e:
+                    if "linalg.eigh" in str(e):
+                        # Skip this ill-conditioned graph
+                        continue
+                    else:
+                        raise e
 
                 lbl = labels[i].item()
                 if lbl not in spectra_by_label:
