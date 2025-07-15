@@ -562,8 +562,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    rho_soft_sum = 0
-    rho_hard_sum = 0
+    rho_sum = 0
     if config['model']['parallel']:
         verbose = model.module.verbose
         model.module.set_epoch(epoch)
@@ -616,8 +615,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
         total_str_loss += aggregated_outputs['loss_str'].item() * batch_size
         total_div_loss += aggregated_outputs['loss_div'].item() * batch_size
         total_load_loss += aggregated_outputs['loss_load'].item() * batch_size
-        rho_soft_sum += aggregated_outputs['rho'][0].item()
-        rho_hard_sum += aggregated_outputs['rho'][1].item()
+        rho_sum += aggregated_outputs['rho'].item()
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
 
@@ -639,11 +637,9 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
-    rho_soft_average = rho_soft_sum / len(loader.dataset)
-    rho_hard_average = rho_hard_sum / len(loader.dataset)
-    metrics['rho_soft_average'] = rho_soft_average
-    metrics['rho_hard_average'] = rho_hard_average
-    print(f"Rho average (soft, hard): {rho_soft_average}, {rho_hard_average}")
+    rho_average = rho_sum / len(loader.dataset)
+    metrics['rho_average'] = rho_average
+    print(f"Rho average: {rho_average}")
 
     gc.collect()
     torch.cuda.empty_cache()

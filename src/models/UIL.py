@@ -449,9 +449,7 @@ class Experts(nn.Module):
             nn.Linear(hidden_dim, num_classes) for _ in range(num_experts)
         ])
         
-        self.rho_soft = nn.Parameter(torch.tensor(rho))
-        self.rho_hard = nn.Parameter(torch.tensor(rho))
-        #self.rho = 0.5
+        self.rho = nn.Parameter(torch.tensor(rho))
 
     def forward(self, data, target=None, embeddings_by_env=None, labels_by_env=None):
         """
@@ -524,7 +522,7 @@ class Experts(nn.Module):
             'loss_reg_list': None,
             'loss_sem_list': None,
             'loss_str_list': None,
-            'rho': [self.rho_soft, self.rho_hard],
+            'rho': self.rho,
             'cached_masks': self.cached_masks
         }
 
@@ -595,20 +593,19 @@ class Experts(nn.Module):
             return F.cross_entropy(pred, target)
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask):
-        rho_soft = torch.clamp(self.rho_soft, 0.0, 1.0)
-        rho_hard = torch.clamp(self.rho_hard, 0.0, 1.0)
+        rho = torch.clamp(self.rho, 0.0, 1.0)
 
         node_ratio = node_mask.mean()
         edge_ratio = edge_mask.mean()
         feat_ratio = feat_mask.mean()
-        node_dev = (node_ratio - rho_soft).pow(2)
-        edge_dev = (edge_ratio - rho_soft).pow(2)
-        feat_dev = (feat_ratio - rho_soft).pow(2)
+        node_dev = (node_ratio - rho).pow(2)
+        edge_dev = (edge_ratio - rho).pow(2)
+        feat_dev = (feat_ratio - rho).pow(2)
 
         node_l0 = (node_mask > 0).float().mean()
         edge_l0 = (edge_mask > 0).float().mean()
         feat_l0 = (feat_mask > 0).float().mean()
-        l0_dev = (node_l0 - rho_hard).pow(2) + (edge_l0 - rho_hard).pow(2) + (feat_l0 - rho_hard).pow(2)
+        l0_dev = (node_l0 - rho).pow(2) + (edge_l0 - rho).pow(2) + (feat_l0 - rho).pow(2)
 
         return node_dev + edge_dev + feat_dev + l0_dev
     
