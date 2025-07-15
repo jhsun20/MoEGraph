@@ -7,7 +7,7 @@ import os
 import random
 import warnings
 from torch_geometric.datasets import *
-from data.good import *
+from src.data.good import *
 
 # Suppress user warnings
 warnings.filterwarnings("ignore", category=UserWarning)
