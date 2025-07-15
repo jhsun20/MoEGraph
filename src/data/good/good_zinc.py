@@ -75,7 +75,7 @@ class GOODZINC(InMemoryDataset):
         generate (bool): The flag for regenerating dataset. True: regenerate. False: download.
     """
 
-    def __init__(self, root: str, domain: str, shift: str = 'no_shift', subset: str = 'train', transform=None,
+    def __init__(self, root: str, domain: str = 'scaffold', shift: str = 'no_shift', subset: str = 'train', transform=None,
                  pre_transform=None, generate: bool = False):
 
         self.name = self.__class__.__name__
