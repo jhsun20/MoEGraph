@@ -449,8 +449,8 @@ class Experts(nn.Module):
             nn.Linear(hidden_dim, num_classes) for _ in range(num_experts)
         ])
         
-        #self.rho = nn.Parameter(torch.tensor(rho))
-        self.rho = 0.5
+        self.rho = nn.Parameter(torch.tensor(rho))
+        #self.rho = 0.5
 
     def forward(self, data, target=None, embeddings_by_env=None, labels_by_env=None):
         """

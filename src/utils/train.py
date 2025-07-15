@@ -562,6 +562,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
+    rho_accumulator = []
     if config['model']['parallel']:
         verbose = model.module.verbose
         model.module.set_epoch(epoch)
@@ -614,6 +615,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
         total_str_loss += aggregated_outputs['loss_str'].item() * batch_size
         total_div_loss += aggregated_outputs['loss_div'].item() * batch_size
         total_load_loss += aggregated_outputs['loss_load'].item() * batch_size
+        rho_accumulator.append(aggregated_outputs['rho'].detach())
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
 
@@ -635,6 +637,10 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
+    rho_average = torch.mean(torch.stack(rho_accumulator)).item()
+    metrics['rho_average'] = rho_average
+    print(f"Rho average: {rho_average}")
+
     gc.collect()
     torch.cuda.empty_cache()
 
