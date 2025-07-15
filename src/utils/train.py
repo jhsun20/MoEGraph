@@ -615,6 +615,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
         total_str_loss += aggregated_outputs['loss_str'].item() * batch_size
         total_div_loss += aggregated_outputs['loss_div'].item() * batch_size
         total_load_loss += aggregated_outputs['loss_load'].item() * batch_size
+        #print(aggregated_outputs['rho'])
         rho_sum += aggregated_outputs['rho'].item()
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
@@ -637,7 +638,7 @@ def train_epoch_moeuil(model, loader, optimizer, dataset_info, device, epoch, co
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
-    rho_average = rho_sum / len(loader.dataset)
+    rho_average = rho_sum / len(loader)
     metrics['rho_average'] = rho_average
     print(f"Rho average: {rho_average}")
 
