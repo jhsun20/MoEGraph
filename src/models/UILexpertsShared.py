@@ -190,24 +190,28 @@ class MoEUILModelSharedEncoder(nn.Module):
             # Get masks from shared output - shape: (N, num_experts, 1) and (E, num_experts, 1)
             node_masks = shared_output['node_masks']  # (N, num_experts, 1)
             edge_masks = shared_output['edge_masks']  # (E, num_experts, 1)
+            feat_masks = shared_output['feat_masks']  # (N, num_experts, 1)
             
             # Reshape to (num_experts, N) and (num_experts, E)
             node_masks = node_masks.squeeze(-1).transpose(0, 1)  # (num_experts, N)
             edge_masks = edge_masks.squeeze(-1).transpose(0, 1)  # (num_experts, E)
+            feat_masks = feat_masks.squeeze(-1).transpose(0, 1)  # (num_experts, N)
 
             # Compute cosine similarity matrices
             node_sim = cosine_matrix(node_masks)
             edge_sim = cosine_matrix(edge_masks)
+            feat_sim = cosine_matrix(feat_masks)
 
             # Compute diversity (lower similarity = higher diversity)
             node_div = off_diagonal_mean(node_sim)
             edge_div = off_diagonal_mean(edge_sim)
+            feat_div = off_diagonal_mean(feat_sim)
 
             # Average diversity across node and edge masks
-            diversity_loss = (node_div + edge_div) / 2
+            diversity_loss = (node_div + edge_div + feat_div) / 3
             
             if self.verbose:
-                print(f"Diversity loss - node: {node_div:.4f}, edge: {edge_div:.4f}, avg: {diversity_loss:.4f}")
+                print(f"Diversity loss - node: {node_div:.4f}, edge: {edge_div:.4f}, feat: {feat_div:.4f}, avg: {diversity_loss:.4f}")
                 
         elif div_loss_type == 'cosine_embedding':
             # Alternative: compute diversity based on expert embeddings
