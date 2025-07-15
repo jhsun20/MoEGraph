@@ -18,11 +18,11 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODCMNIST"  # Specific dataset from GOOD
+  dataset_name: "GOODHIV"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 128
+  batch_size: 32
   num_workers: 4
 
 # Model configuration
