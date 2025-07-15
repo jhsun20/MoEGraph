@@ -595,9 +595,9 @@ class Experts(nn.Module):
             return F.cross_entropy(pred, target)
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask):
-        rho_node = torch.clamp(self.rho_node, 0.0, 0.8)
-        rho_edge = torch.clamp(self.rho_edge, 0.0, 0.8)
-        rho_feat = torch.clamp(self.rho_feat, 0.0, 0.8)
+        rho_node = torch.clamp(self.rho_node, 0.0, 0.95)
+        rho_edge = torch.clamp(self.rho_edge, 0.0, 0.95)
+        rho_feat = torch.clamp(self.rho_feat, 0.0, 0.95)
 
         node_ratio = node_mask.mean()
         edge_ratio = edge_mask.mean()
