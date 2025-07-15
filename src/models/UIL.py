@@ -542,8 +542,8 @@ class Experts(nn.Module):
                 reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask)
                 reg_loss_list.append(reg_loss)
 
-                #sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig)
-                sem_loss = torch.tensor(0.0, device=expert_logit.device)
+                sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig)
+                #sem_loss = torch.tensor(0.0, device=expert_logit.device)
                 sem_loss_list.append(sem_loss)
 
                 str_loss = self.compute_structural_invariance_loss(expert_h_stable, target, edge_index, batch, expert_node_mask, expert_edge_mask)
