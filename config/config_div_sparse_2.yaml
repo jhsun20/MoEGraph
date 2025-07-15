@@ -35,11 +35,11 @@ model:
   pooling: "mean"  # Options: mean, sum, max
   weight_str: 0.0
   weight_sem: 0.0
-  weight_reg: 0.5
+  weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 0.01
   weight_load: 0.1
-  num_experts: 4
+  num_experts: 3
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
