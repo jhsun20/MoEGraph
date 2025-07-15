@@ -545,7 +545,7 @@ class Experts(nn.Module):
                 sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig)
                 sem_loss_list.append(sem_loss)
 
-                str_loss = self.compute_structural_invariance_loss(expert_h_stable, target, edge_index, batch, expert_node_mask, expert_edge_mask, mode="embedding", topk=10)
+                str_loss = self.compute_structural_invariance_loss(expert_h_stable, target, edge_index, batch, expert_node_mask, expert_edge_mask)
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
@@ -650,6 +650,7 @@ class Experts(nn.Module):
 
         elif mode == "laplacian":
             # === Laplacian spectrum-based structural invariance ===
+            # print(f"Computing Laplacian spectrum-based structural invariance.")
             adj_dense = to_dense_adj(edge_index, batch=batch, edge_attr=edge_mask.view(-1)).squeeze(0)  # (B, N, N)
             if adj_dense.dim() == 2:
                 adj_dense = adj_dense.unsqueeze(0)  # (1, N, N)
@@ -659,6 +660,7 @@ class Experts(nn.Module):
             for i in range(h_stable.size(0)):  # loop over graphs in batch
                 A = adj_dense[i]
                 if A.size(0) != A.size(1):
+                    # print(f"Skipping graph {i} due to non-square adjacency matrix.")
                     continue
                 deg = A.sum(dim=-1)
                 D = torch.diag(deg)
@@ -670,17 +672,25 @@ class Experts(nn.Module):
                 if lbl not in spectra_by_label:
                     spectra_by_label[lbl] = []
                 spectra_by_label[lbl].append(topk_eigs)
+                # print(f"Graph {i} with label {lbl}: top-{topk} eigenvalues = {topk_eigs}")
 
             count = 0
             for lbl, spectra in spectra_by_label.items():
                 if len(spectra) < 2:
+                    # print(f"Label {lbl} has less than 2 spectra, skipping.")
                     continue
                 for i in range(len(spectra)):
                     for j in range(i + 1, len(spectra)):
                         loss += F.mse_loss(spectra[i], spectra[j])
                         count += 1
+                        # print(f"Comparing spectra {i} and {j} for label {lbl}: loss = {loss}")
 
-            return loss / count if count > 0 else torch.tensor(0.0, device=device)
+            if count > 0:
+                # print(f"Total pairs compared: {count}, Average loss: {loss / count}")
+                return loss / count
+            else:
+                # print("No valid pairs found for comparison.")
+                return torch.tensor(0.0, device=device)
 
         else:
             raise ValueError(f"Unsupported mode: {mode}. Choose 'laplacian' or 'embedding'.")

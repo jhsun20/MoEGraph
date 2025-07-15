@@ -6,7 +6,7 @@ experiment:
   device: "cuda"  # or "cpu"
   debug:
     enable: true
-    num_samples: 16
+    num_samples: 64
     epochs: 5
     verbose: false
   seeds: [42]  # Add more seeds as needed
@@ -21,7 +21,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 4
+  batch_size: 32
   num_workers: 4
 
 # Model configuration
