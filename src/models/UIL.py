@@ -542,7 +542,8 @@ class Experts(nn.Module):
                 reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask)
                 reg_loss_list.append(reg_loss)
 
-                sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig)
+                #sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig)
+                sem_loss = torch.tensor(0.0, device=expert_logit.device)
                 sem_loss_list.append(sem_loss)
 
                 str_loss = self.compute_structural_invariance_loss(expert_h_stable, target, edge_index, batch, expert_node_mask, expert_edge_mask)
@@ -674,23 +675,15 @@ class Experts(nn.Module):
                 spectra_by_label[lbl].append(topk_eigs)
                 # print(f"Graph {i} with label {lbl}: top-{topk} eigenvalues = {topk_eigs}")
 
-            count = 0
             for lbl, spectra in spectra_by_label.items():
                 if len(spectra) < 2:
-                    # print(f"Label {lbl} has less than 2 spectra, skipping.")
                     continue
-                for i in range(len(spectra)):
-                    for j in range(i + 1, len(spectra)):
-                        loss += F.mse_loss(spectra[i], spectra[j])
-                        count += 1
-                        # print(f"Comparing spectra {i} and {j} for label {lbl}: loss = {loss}")
+                spectra_stack = torch.stack(spectra)  # (B_lbl, k)
+                mean_spectrum = spectra_stack.mean(dim=0)  # (k,)
+                var = ((spectra_stack - mean_spectrum)**2).mean()
+                loss += var
 
-            if count > 0:
-                # print(f"Total pairs compared: {count}, Average loss: {loss / count}")
-                return loss / count
-            else:
-                # print("No valid pairs found for comparison.")
-                return torch.tensor(0.0, device=device)
+            return loss / len(spectra_by_label) if spectra_by_label else torch.tensor(0.0, device=device)
 
         else:
             raise ValueError(f"Unsupported mode: {mode}. Choose 'laplacian' or 'embedding'.")
