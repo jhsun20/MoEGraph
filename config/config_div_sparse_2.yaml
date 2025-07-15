@@ -39,7 +39,7 @@ model:
   weight_ce: 1.0
   weight_div: 0.01
   weight_load: 0.1
-  num_experts: 3
+  num_experts: 8
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
@@ -64,7 +64,7 @@ logging:
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.38
+  entmax_alpha: 1.3
   model: "GIN"
   depth: 2
   hidden_dim: 64
