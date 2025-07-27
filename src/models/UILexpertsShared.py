@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.UIL import UILModelSharedEncoder, Experts
+from models.UIL import Experts
 from models.gnn_models import GIN
 from entmax import entmax15, entmax_bisect
 from torch_geometric.data import Batch

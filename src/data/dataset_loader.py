@@ -39,16 +39,16 @@ def load_dataset(config):
     dataset_name = dataset_config.get('dataset_name')
     task_type = dataset_config.get('task_type')
     shift_type = dataset_config.get('shift_type')
-    if dataset_config.get('domain') is not None:
-        domain = dataset_config.get('domain')
-    else:
-        domain = None
 
     if dataset_name[:4] == 'GOOD':
         class_name = eval(f'GOOD{dataset_name[4:]}')
-        datasets, meta_info = class_name.load(dataset_root=dataset_path,
-                                              shift=shift_type,
-                                              domain=domain)
+        if dataset_config.get('domain') is not None:
+            datasets, meta_info = class_name.load(dataset_root=dataset_path,
+                                                  shift=shift_type,
+                                                  domain=dataset_config.get('domain'))
+        else:
+            datasets, meta_info = class_name.load(dataset_root=dataset_path,
+                                                  shift=shift_type)
         
         if task_type == 'node_classification':
             dataset = datasets

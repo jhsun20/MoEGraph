@@ -426,7 +426,7 @@ class Experts(nn.Module):
         self.verbose = config['experiment']['debug']['verbose']
         self.num_experts = num_experts
         
-        self.encoder = GINEncoderWithEdgeWeight(num_features, hidden_dim, num_layers, dropout, train_eps=True)
+        self.causal_encoder = GINEncoderWithEdgeWeight(num_features, hidden_dim, num_layers, dropout, train_eps=True)
         
         self.expert_node_masks = nn.ModuleList([
             nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
@@ -444,6 +444,7 @@ class Experts(nn.Module):
         ])
         
         # MAYBE ADD A DIFFERENT GNN ENCODER HERE
+        self.classifier_encoder = GINEncoderWithEdgeWeight(num_features, hidden_dim, num_layers, dropout, train_eps=True)
         
         self.expert_classifiers = nn.ModuleList([
             nn.Linear(hidden_dim, num_classes) for _ in range(num_experts)
@@ -464,7 +465,7 @@ class Experts(nn.Module):
                 'loss_total', 'loss_ce', 'loss_reg', 'loss_sem', 'loss_str'
         """
         x, edge_index, batch = data.x, data.edge_index, data.batch
-        Z = self.encoder(x, edge_index, batch=batch)
+        Z = self.causal_encoder(x, edge_index, batch=batch)
         
         node_masks = []
         edge_masks = []
@@ -487,7 +488,7 @@ class Experts(nn.Module):
             masked_x = x * node_mask * feat_mask  # (N, D), broadcasted elementwise
 
             edge_weight = edge_mask.view(-1)
-            masked_Z = self.encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+            masked_Z = self.classifier_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
             h_stable = global_mean_pool(masked_Z, batch)
             h_stable_list.append(h_stable)
 
