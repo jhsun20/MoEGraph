@@ -97,16 +97,16 @@ class UILModel(nn.Module):
             })
 
         return output
-    
+
     def compute_classification_loss(self, pred, target, use_weights=False):
         """
         Computes cross-entropy loss with optional class imbalance correction.
-        
+
         Args:
             pred (Tensor): Logits of shape (B, C)
             target (Tensor): Ground truth labels of shape (B,)
             use_weights (bool): Whether to use class weights for imbalance correction. Default: False
-        
+
         Returns:
             Tensor: Cross-entropy loss
         """
@@ -114,14 +114,14 @@ class UILModel(nn.Module):
             # Compute class counts from current batch
             num_classes = pred.size(1)
             class_counts = torch.bincount(target, minlength=num_classes).float()
-            
+
             # Avoid division by zero
             class_counts[class_counts == 0] = 1.0
 
             # Inverse frequency weighting normalized to sum to 1
             weight = 1.0 / class_counts
             weight = weight / weight.sum()
-            
+
             return F.cross_entropy(pred, target, weight=weight.to(pred.device))
         else:
             return F.cross_entropy(pred, target)
@@ -167,9 +167,9 @@ class UILModel(nn.Module):
                         loss += F.mse_loss(h_by_env[i], h_by_env[j])
 
         return loss
-    
 
-    
+
+
 class UILModelSharedEncoder(nn.Module):
     def __init__(self, config, dataset_info, rho=0.5):
         super().__init__()
@@ -179,33 +179,33 @@ class UILModelSharedEncoder(nn.Module):
         num_layers = config['model']['num_layers']
         dropout = config['model']['dropout']
         num_experts = config['model']['num_experts']
-        
+
         self.weight_str = config['model']['weight_str']
         self.weight_sem = config['model']['weight_sem']
         self.weight_reg = config['model']['weight_reg']
         self.weight_ce = config['model']['weight_ce']
         self.verbose = config['experiment']['debug']['verbose']  # Check if debug mode is enabled
         self.num_experts = num_experts
-        
+
         # Shared encoder
         self.encoder = GINEncoderWithEdgeWeight(num_features, hidden_dim, num_layers, dropout, train_eps=True)
-        
+
         # Multiple expert heads - each expert has its own node and edge mask MLPs
         self.expert_node_masks = nn.ModuleList([
             nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
             for _ in range(num_experts)
         ])
-        
+
         self.expert_edge_masks = nn.ModuleList([
             nn.Sequential(nn.Linear(2*hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
             for _ in range(num_experts)
         ])
-        
+
         # Multiple expert classifiers
         self.expert_classifiers = nn.ModuleList([
             nn.Linear(hidden_dim, num_classes) for _ in range(num_experts)
         ])
-        
+
         self.rho = nn.Parameter(torch.tensor(rho))  # Learnable stable ratio
 
     def forward(self, data, target=None, embeddings_by_env=None, labels_by_env=None):
@@ -222,34 +222,34 @@ class UILModelSharedEncoder(nn.Module):
 
         # First pass: full graph - shared encoder
         Z = self.encoder(x, edge_index, batch=batch)  # node embeddings (N, d)
-        
+
         # Generate masks for each expert
         node_masks = []
         edge_masks = []
         expert_logits = []
         h_stable_list = []
-        
+
         edge_feat = torch.cat([Z[edge_index[0]], Z[edge_index[1]]], dim=1)
-        
+
         for expert_idx in range(self.num_experts):
             # Generate expert-specific masks
             node_mask = torch.sigmoid(self.expert_node_masks[expert_idx](Z.detach()))  # (N, 1)
             edge_mask = torch.sigmoid(self.expert_edge_masks[expert_idx](edge_feat.detach()))  # (E, 1)
-            
+
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
-            
+
             # Apply masks and re-encode for this expert
             masked_x = x * node_mask
             edge_weight = edge_mask.view(-1)
             masked_Z = self.encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
             h_stable = global_mean_pool(masked_Z, batch)
             h_stable_list.append(h_stable)
-            
+
             # Expert-specific classification
             expert_logit = self.expert_classifiers[expert_idx](h_stable)
             expert_logits.append(expert_logit)
-        
+
         # Stack all expert outputs
         node_masks = torch.stack(node_masks, dim=1)  # (N, num_experts, 1)
         edge_masks = torch.stack(edge_masks, dim=1)  # (E, num_experts, 1)
@@ -290,39 +290,39 @@ class UILModelSharedEncoder(nn.Module):
             sem_loss_list = []
             str_loss_list = []
             total_loss_list = []
-            
+
             for expert_idx in range(self.num_experts):
                 # Get expert-specific logits and embeddings
                 expert_logit = expert_logits[:, expert_idx, :]  # (batch_size, num_classes)
                 expert_h_stable = h_stable_list[:, expert_idx, :]  # (batch_size, hidden_dim)
-                
+
                 # Compute classification loss for this expert
                 ce_loss = self.compute_classification_loss(expert_logit, target)
                 ce_loss_list.append(ce_loss)
-                
+
                 # Compute mask regularization for this expert
                 expert_node_mask = node_masks[:, expert_idx, :]  # (N, 1)
                 expert_edge_mask = edge_masks[:, expert_idx, :]  # (E, 1)
                 reg_loss = self.compute_mask_regularization_single(expert_node_mask, expert_edge_mask)
                 reg_loss_list.append(reg_loss)
-                
+
                 # Compute semantic invariance loss for this expert
                 sem_loss = self.compute_semantic_invariance_loss_single(expert_h_stable, h_orig)
                 sem_loss_list.append(sem_loss)
-                
+
                 # Compute structural invariance loss (set to zero for now)
                 str_loss = torch.tensor(0.0, device=expert_logit.device)
                 if self.weight_str > 0 and embeddings_by_env is not None and labels_by_env is not None:
                     str_loss = self.compute_structural_invariance_loss(embeddings_by_env, labels_by_env)
                 str_loss_list.append(str_loss)
-                
+
                 # Compute total loss for this expert
-                total_loss = (self.weight_ce * ce_loss + 
-                            self.weight_reg * reg_loss + 
-                            self.weight_str * str_loss + 
+                total_loss = (self.weight_ce * ce_loss +
+                            self.weight_reg * reg_loss +
+                            self.weight_str * str_loss +
                             self.weight_sem * sem_loss)
                 total_loss_list.append(total_loss)
-            
+
             # Stack all losses
             ce_loss_list = torch.stack(ce_loss_list)  # (num_experts,)
             reg_loss_list = torch.stack(reg_loss_list)  # (num_experts,)
@@ -339,16 +339,16 @@ class UILModelSharedEncoder(nn.Module):
             })
 
         return output
-    
+
     def compute_classification_loss(self, pred, target, use_weights=False):
         """
         Computes cross-entropy loss with optional class imbalance correction.
-        
+
         Args:
             pred (Tensor): Logits of shape (B, C)
             target (Tensor): Ground truth labels of shape (B,)
             use_weights (bool): Whether to use class weights for imbalance correction. Default: False
-        
+
         Returns:
             Tensor: Cross-entropy loss
         """
@@ -356,14 +356,14 @@ class UILModelSharedEncoder(nn.Module):
             # Compute class counts from current batch
             num_classes = pred.size(1)
             class_counts = torch.bincount(target, minlength=num_classes).float()
-            
+
             # Avoid division by zero
             class_counts[class_counts == 0] = 1.0
 
             # Inverse frequency weighting normalized to sum to 1
             weight = 1.0 / class_counts
             weight = weight / weight.sum()
-            
+
             return F.cross_entropy(pred, target, weight=weight.to(pred.device))
         else:
             return F.cross_entropy(pred, target)
@@ -407,10 +407,10 @@ class UILModelSharedEncoder(nn.Module):
                         loss += F.mse_loss(h_by_env[i], h_by_env[j])
 
         return loss
-    
+
 
 class Experts(nn.Module):
-    def __init__(self, config, dataset_info, rho=0.9):
+    def __init__(self, config, dataset_info, rho=0.5):
         super().__init__()
         num_features = dataset_info['num_features']
         num_classes = dataset_info['num_classes']
@@ -418,38 +418,38 @@ class Experts(nn.Module):
         num_layers = config['model']['num_layers']
         dropout = config['model']['dropout']
         num_experts = config['model']['num_experts']
-        
+
         self.weight_str = config['model']['weight_str']
         self.weight_sem = config['model']['weight_sem']
         self.weight_reg = config['model']['weight_reg']
         self.weight_ce = config['model']['weight_ce']
         self.verbose = config['experiment']['debug']['verbose']
         self.num_experts = num_experts
-        
+
         self.causal_encoder = GINEncoderWithEdgeWeight(num_features, hidden_dim, num_layers, dropout, train_eps=True)
-        
+
         self.expert_node_masks = nn.ModuleList([
             nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
             for _ in range(num_experts)
         ])
-        
+
         self.expert_edge_masks = nn.ModuleList([
             nn.Sequential(nn.Linear(2*hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
             for _ in range(num_experts)
         ])
-        
+
         self.expert_feat_masks = nn.ModuleList([
             nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, num_features))
             for _ in range(num_experts)
         ])
-        
+
         # MAYBE ADD A DIFFERENT GNN ENCODER HERE
         self.classifier_encoder = GINEncoderWithEdgeWeight(num_features, hidden_dim, num_layers, dropout, train_eps=True)
-        
+
         self.expert_classifiers = nn.ModuleList([
             nn.Linear(hidden_dim, num_classes) for _ in range(num_experts)
         ])
-        
+
         self.rho_node = nn.Parameter(torch.tensor(rho))
         self.rho_edge = nn.Parameter(torch.tensor(rho))
         self.rho_feat = nn.Parameter(torch.tensor(rho))
@@ -466,25 +466,25 @@ class Experts(nn.Module):
         """
         x, edge_index, batch = data.x, data.edge_index, data.batch
         Z = self.causal_encoder(x, edge_index, batch=batch)
-        
+
         node_masks = []
         edge_masks = []
         feat_masks = []
         expert_logits = []
         h_stable_list = []
-        
+
         edge_feat = torch.cat([Z[edge_index[0]], Z[edge_index[1]]], dim=1)
 
         for expert_idx in range(self.num_experts):
             node_mask = torch.sigmoid(self.expert_node_masks[expert_idx](Z))
             edge_mask = torch.sigmoid(self.expert_edge_masks[expert_idx](edge_feat))
             feat_mask = torch.sigmoid(self.expert_feat_masks[expert_idx](Z))  # (N, D)
-            
+
 
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
             feat_masks.append(feat_mask)
-            
+
             masked_x = x * node_mask * feat_mask  # (N, D), broadcasted elementwise
 
             edge_weight = edge_mask.view(-1)
@@ -494,7 +494,7 @@ class Experts(nn.Module):
 
             expert_logit = self.expert_classifiers[expert_idx](h_stable)
             expert_logits.append(expert_logit)
-        
+
         node_masks = torch.stack(node_masks, dim=1)
         edge_masks = torch.stack(edge_masks, dim=1)
         feat_masks = torch.stack(feat_masks, dim=1)
@@ -531,7 +531,7 @@ class Experts(nn.Module):
 
         if target is not None:
             ce_loss_list, reg_loss_list, sem_loss_list, str_loss_list, total_loss_list = [], [], [], [], []
-            
+
             for expert_idx in range(self.num_experts):
                 expert_logit = expert_logits[:, expert_idx, :]
                 expert_h_stable = h_stable_list[:, expert_idx, :]
@@ -551,12 +551,12 @@ class Experts(nn.Module):
                 str_loss = self.compute_structural_invariance_loss(expert_h_stable, target, edge_index, batch, expert_node_mask, expert_edge_mask)
                 str_loss_list.append(str_loss)
 
-                total_loss = (self.weight_ce * ce_loss + 
-                              self.weight_reg * reg_loss + 
-                              self.weight_str * str_loss + 
+                total_loss = (self.weight_ce * ce_loss +
+                              self.weight_reg * reg_loss +
+                              self.weight_str * str_loss +
                               self.weight_sem * sem_loss)
                 total_loss_list.append(total_loss)
-            
+
             output.update({
                 'loss_total_list': torch.stack(total_loss_list),
                 'loss_ce_list': torch.stack(ce_loss_list),
@@ -570,12 +570,12 @@ class Experts(nn.Module):
     def compute_classification_loss(self, pred, target, use_weights=False):
         """
         Computes cross-entropy loss with optional class imbalance correction.
-        
+
         Args:
             pred (Tensor): Logits of shape (B, C)
             target (Tensor): Ground truth labels of shape (B,)
             use_weights (bool): Whether to use class weights for imbalance correction. Default: False
-        
+
         Returns:
             Tensor: Cross-entropy loss
         """
@@ -583,14 +583,14 @@ class Experts(nn.Module):
             # Compute class counts from current batch
             num_classes = pred.size(1)
             class_counts = torch.bincount(target, minlength=num_classes).float()
-            
+
             # Avoid division by zero
             class_counts[class_counts == 0] = 1.0
 
             # Inverse frequency weighting normalized to sum to 1
             weight = 1.0 / class_counts
             weight = weight / weight.sum()
-            
+
             return F.cross_entropy(pred, target, weight=weight.to(pred.device))
         else:
             return F.cross_entropy(pred, target)
@@ -613,7 +613,7 @@ class Experts(nn.Module):
         l0_dev = (node_l0 - rho_node).pow(2) + (edge_l0 - rho_edge).pow(2) + (feat_l0 - rho_feat).pow(2)
 
         return node_dev + edge_dev + feat_dev + l0_dev
-    
+
     # def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask):
     #     rho = torch.clamp(self.rho, 0.0, 1.0)
     #     eps = 1e-6
@@ -632,7 +632,7 @@ class Experts(nn.Module):
     def compute_structural_invariance_loss(self, h_stable, labels, edge_index, batch, node_mask, edge_mask, mode="embedding", topk=10):
         """
         Computes structural invariance loss.
-        
+
         Args:
             h_stable: Tensor (B, D), graph-level embeddings from causal subgraphs
             labels: Tensor (B,), integer class labels
