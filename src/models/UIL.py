@@ -410,7 +410,7 @@ class UILModelSharedEncoder(nn.Module):
     
 
 class Experts(nn.Module):
-    def __init__(self, config, dataset_info, rho=0.5):
+    def __init__(self, config, dataset_info, rho=0.9):
         super().__init__()
         num_features = dataset_info['num_features']
         num_classes = dataset_info['num_classes']
