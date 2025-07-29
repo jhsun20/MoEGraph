@@ -488,7 +488,8 @@ class Experts(nn.Module):
             masked_x = x * node_mask * feat_mask  # (N, D), broadcasted elementwise
 
             edge_weight = edge_mask.view(-1)
-            masked_Z = self.classifier_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+            #masked_Z = self.classifier_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+            masked_Z = self.causal_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
             h_stable = global_mean_pool(masked_Z, batch)
             h_stable_list.append(h_stable)
 
