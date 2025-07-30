@@ -24,7 +24,7 @@ dataset:
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 32
   num_workers: 8
-  domain: 'basis' # basis or size
+  domain: 'size' # basis or size
 
 # Model configuration
 model:
