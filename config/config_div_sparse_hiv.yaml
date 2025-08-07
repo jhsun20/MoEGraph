@@ -24,7 +24,7 @@ dataset:
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 32
   num_workers: 4
-  domain: 'size' # scaffold or size
+  domain: 'scaffold' # scaffold or size
 
 # Model configuration
 model:
