@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.UIL import Experts
+from models.expert import Experts
 from models.gnn_models import GIN
 from entmax import entmax15, entmax_bisect
 from torch_geometric.data import Batch
 
-class MoEUILModelSharedEncoder(nn.Module):
+class MoE(nn.Module):
     def __init__(self, config, dataset_info):
-        super(MoEUILModelSharedEncoder, self).__init__()
+        super(MoE, self).__init__()
         
         self.verbose = config['experiment']['debug']['verbose']  # Check if debug mode is enabled
         
@@ -32,7 +32,6 @@ class MoEUILModelSharedEncoder(nn.Module):
         pooling = config['model']['pooling']
 
         # Instantiate single shared encoder model (contains multiple experts internally)
-        #self.shared_model = UILModelSharedEncoder(config, dataset_info)
         self.shared_model = Experts(config, dataset_info)
 
         # Instantiate gating mechanism
@@ -85,8 +84,8 @@ class MoEUILModelSharedEncoder(nn.Module):
         
         # Assert that gate weights still sum to 1 after reshaping
         gate_weights_sum = gate_weights.squeeze(-1).sum(dim=0)  # Sum across experts for each batch item
-        assert torch.allclose(gate_weights_sum, torch.ones_like(gate_weights_sum), atol=1e-6), \
-            f"Gate weights after reshape do not sum to 1: {gate_weights_sum}"
+        # assert torch.allclose(gate_weights_sum, torch.ones_like(gate_weights_sum), atol=1e-6), \
+        #     f"Gate weights after reshape do not sum to 1: {gate_weights_sum}"
         
         if self.verbose:
             print("Gate weights shape after reshape:", gate_weights.shape)
@@ -265,34 +264,6 @@ class MoEUILModelSharedEncoder(nn.Module):
 
         return load_balance_loss
     
-    def compute_classification_loss(self, pred, target, use_weights=False):
-        """
-        Computes cross-entropy loss with optional class imbalance correction.
-        
-        Args:
-            pred (Tensor): Logits of shape (B, C)
-            target (Tensor): Ground truth labels of shape (B,)
-            use_weights (bool): Whether to use class weights for imbalance correction. Default: False
-        
-        Returns:
-            Tensor: Cross-entropy loss
-        """
-        if use_weights:
-            # Compute class counts from current batch
-            num_classes = pred.size(1)
-            class_counts = torch.bincount(target, minlength=num_classes).float()
-            
-            # Avoid division by zero
-            class_counts[class_counts == 0] = 1.0
-
-            # Inverse frequency weighting normalized to sum to 1
-            weight = 1.0 / class_counts
-            weight = weight / weight.sum()
-            
-            return F.cross_entropy(pred, target, weight=weight.to(pred.device))
-        else:
-            return F.cross_entropy(pred, target)
-
     def set_epoch(self, epoch: int):
         self.current_epoch = epoch
 

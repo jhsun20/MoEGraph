@@ -1,8 +1,5 @@
 from models.gnn_models import GCN, GIN, GraphSAGE
-from models.experts import MoEModel
-from models.UIL import UILModel
-from models.UILexperts import MoEUILModel
-from models.UILexpertsShared import MoEUILModelSharedEncoder
+from models.MoE import MoE
 
 def get_model(config, dataset_info):
     """
@@ -34,14 +31,7 @@ def get_model(config, dataset_info):
     elif model_type == 'GraphSAGE':
         model = GraphSAGE(num_features, num_classes, hidden_dim, num_layers, dropout, pooling)
     elif model_type == 'moe':
-        model = MoEModel(config, dataset_info)
-    elif model_type == 'moe_shared':
-        model = MoeModelShared(config, dataset_info)
-    elif model_type == 'uil':
-        model = UILModel(config, dataset_info)
-    elif model_type == 'moe_uil':
-        #model = MoEUILModel(config, dataset_info)
-        model = MoEUILModelSharedEncoder(config, dataset_info)
+        model = MoE(config, dataset_info)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
     
