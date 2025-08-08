@@ -53,9 +53,12 @@ class Experts(nn.Module):
         # self.rho_node = nn.Parameter(torch.tensor(rho))
         # self.rho_edge = nn.Parameter(torch.tensor(rho))
         # self.rho_feat = nn.Parameter(torch.tensor(rho))
-        self.rho_node = nn.Parameter(torch.full((num_experts,), float(rho)))
-        self.rho_edge = nn.Parameter(torch.full((num_experts,), float(rho)))
-        self.rho_feat = nn.Parameter(torch.full((num_experts,), float(rho)))
+        # self.rho_node = nn.Parameter(torch.full((num_experts,), float(rho)))
+        # self.rho_edge = nn.Parameter(torch.full((num_experts,), float(rho)))
+        # self.rho_feat = nn.Parameter(torch.full((num_experts,), float(rho)))
+        self.rho_node = nn.Parameter(torch.empty(num_experts).uniform_(0.2, 0.8))
+        self.rho_edge = nn.Parameter(torch.empty(num_experts).uniform_(0.2, 0.8))
+        self.rho_feat = nn.Parameter(torch.empty(num_experts).uniform_(0.2, 0.8))
 
     def forward(self, data, target=None, embeddings_by_env=None, labels_by_env=None):
         """
