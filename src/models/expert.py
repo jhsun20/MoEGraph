@@ -226,9 +226,9 @@ class Experts(nn.Module):
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask, expert_idx: int):
         # clamp each expert's rho into [0.2, 0.8] as you wanted
-        rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.8)
-        rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.8)
-        rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.2, 0.8)
+        rho_node = torch.clamp(self.rho_node[expert_idx], 0.05, 0.3)
+        rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.05, 0.3)
+        rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.05, 0.3)
 
         # Mean deviation from target rho
         node_dev = (node_mask.mean() - rho_node).pow(2)
