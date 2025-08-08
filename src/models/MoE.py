@@ -95,9 +95,10 @@ class MoE(nn.Module):
             # Weighted aggregation of expert logits
             weighted_logits = stacked_logits * gate_weights
             aggregated_logits = torch.sum(weighted_logits, dim=0)
-            
-            # Compute classification loss on aggregated logits
-            aggregated_ce_loss = self.compute_classification_loss(aggregated_logits, data.y)
+
+            # Per-expert, per-sample gate-weighted CE
+            aggregated_ce_loss = self.compute_gate_weighted_ce_loss(stacked_logits, data.y, gate_weights)
+            #aggregated_ce_loss = self.compute_classification_loss(aggregated_logits, data.y)
             
             # Aggregate individual expert losses using gate weights
             aggregated_reg_loss = torch.tensor(0.0, device=stacked_logits.device)
@@ -165,6 +166,35 @@ class MoE(nn.Module):
                             device=data.x.device)
         else:
             return self.gate(data)  # (batch_size, num_experts)
+        
+    def compute_gate_weighted_ce_loss(self, stacked_logits, targets, gate_weights):
+        """
+        Computes per-expert CE loss weighted per-sample by the gating weights.
+
+        Args:
+            stacked_logits (Tensor): Shape (K, B, C), logits for each expert
+            targets (Tensor): Shape (B,), ground truth labels
+            gate_weights (Tensor): Shape (K, B, 1), gate weights per expert/sample
+
+        Returns:
+            Tensor: Scalar gate-weighted CE loss
+        """
+        K, B, _ = stacked_logits.shape
+        total_loss = 0.0
+
+        for k in range(K):
+            # (B, C) logits for expert k
+            logits_k = stacked_logits[k]
+
+            # Per-sample CE loss (no reduction)
+            ce_per_sample = F.cross_entropy(logits_k, targets, reduction='none')  # (B,)
+
+            # Weight each sample's CE by its gate weight for this expert
+            weighted_ce = (gate_weights[k, :, 0] * ce_per_sample).mean()
+
+            total_loss += weighted_ce
+
+        return total_loss
         
     def compute_classification_loss(self, pred, target, use_weights=False):
         """
