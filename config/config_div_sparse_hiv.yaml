@@ -38,8 +38,8 @@ model:
   weight_sem: 1.0
   weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 0.01
-  weight_load: 0.1
+  weight_div: 0.0
+  weight_load: 0.0
   num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 

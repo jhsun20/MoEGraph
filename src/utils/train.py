@@ -96,9 +96,6 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    rho_node_sum = 0
-    rho_edge_sum = 0
-    rho_feat_sum = 0
     if config['model']['parallel']:
         verbose = model.module.verbose
         model.module.set_epoch(epoch)
@@ -151,10 +148,6 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         total_str_loss += aggregated_outputs['loss_str'].item() * batch_size
         total_div_loss += aggregated_outputs['loss_div'].item() * batch_size
         total_load_loss += aggregated_outputs['loss_load'].item() * batch_size
-        #print(aggregated_outputs['rho'])
-        rho_node_sum += aggregated_outputs['rho'][0].item()
-        rho_edge_sum += aggregated_outputs['rho'][1].item()
-        rho_feat_sum += aggregated_outputs['rho'][2].item()
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
 
@@ -176,13 +169,13 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
-    rho_node_average = rho_node_sum / len(loader)
-    rho_edge_average = rho_edge_sum / len(loader)
-    rho_feat_average = rho_feat_sum / len(loader)
-    metrics['rho_node_average'] = rho_node_average
-    metrics['rho_edge_average'] = rho_edge_average
-    metrics['rho_feat_average'] = rho_feat_average
-    print(f"Rho average (node, edge, feat): {rho_node_average}, {rho_edge_average}, {rho_feat_average}")
+    
+    # --- Print per-expert rhos from last batch ---
+    rho_node_all, rho_edge_all, rho_feat_all = aggregated_outputs['rho']  # each is shape (num_experts,)
+    print("\nPer-expert rhos from last batch:")
+    for i in range(len(rho_node_all)):
+        print(f"  Expert {i}: node={rho_node_all[i].item():.4f}, "
+            f"edge={rho_edge_all[i].item():.4f}, feat={rho_feat_all[i].item():.4f}")
 
     gc.collect()
     torch.cuda.empty_cache()

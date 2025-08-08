@@ -50,9 +50,12 @@ class Experts(nn.Module):
             nn.Linear(hidden_dim, num_classes) for _ in range(num_experts)
         ])
         
-        self.rho_node = nn.Parameter(torch.tensor(rho))
-        self.rho_edge = nn.Parameter(torch.tensor(rho))
-        self.rho_feat = nn.Parameter(torch.tensor(rho))
+        # self.rho_node = nn.Parameter(torch.tensor(rho))
+        # self.rho_edge = nn.Parameter(torch.tensor(rho))
+        # self.rho_feat = nn.Parameter(torch.tensor(rho))
+        self.rho_node = nn.Parameter(torch.full((num_experts,), float(rho)))
+        self.rho_edge = nn.Parameter(torch.full((num_experts,), float(rho)))
+        self.rho_feat = nn.Parameter(torch.full((num_experts,), float(rho)))
 
     def forward(self, data, target=None, embeddings_by_env=None, labels_by_env=None):
         """
@@ -151,7 +154,7 @@ class Experts(nn.Module):
                 expert_node_mask = node_masks[:, expert_idx, :]
                 expert_edge_mask = edge_masks[:, expert_idx, :]
                 expert_feat_mask = feat_masks[:, expert_idx, :]
-                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask)
+                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx)
                 reg_loss_list.append(reg_loss)
 
                 sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig, target)
@@ -221,10 +224,11 @@ class Experts(nn.Module):
         else:
             return F.cross_entropy(pred, target)
 
-    def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask):
-        rho_node = torch.clamp(self.rho_node, 0.2, 0.8)
-        rho_edge = torch.clamp(self.rho_edge, 0.2, 0.8)
-        rho_feat = torch.clamp(self.rho_feat, 0.2, 0.8)
+    def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask, expert_idx: int):
+        # clamp each expert's rho into [0.2, 0.8] as you wanted
+        rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.8)
+        rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.8)
+        rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.2, 0.8)
 
         # Mean deviation from target rho
         node_dev = (node_mask.mean() - rho_node).pow(2)
@@ -235,11 +239,10 @@ class Experts(nn.Module):
         node_l0 = node_mask.mean()
         edge_l0 = edge_mask.mean()
         feat_l0 = feat_mask.mean()
-        l0_dev = (node_l0 - rho_node).pow(2) + \
-                (edge_l0 - rho_edge).pow(2) + \
-                (feat_l0 - rho_feat).pow(2)
+        l0_dev = (node_l0 - rho_node).pow(2) + (edge_l0 - rho_edge).pow(2) + (feat_l0 - rho_feat).pow(2)
 
         return node_dev + edge_dev + feat_dev + l0_dev
+
 
     def compute_semantic_invariance_loss(self, h_stable, h_orig, target):
         """
