@@ -468,15 +468,8 @@ def train(config, trial=None):
             logger.load_best_model(model)
             
             if config['model']['type'] == 'moe':
-                test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type)
-                test_id_metrics = evaluate_moe(model, id_test_loader, device, metric_type)
-            elif config['model']['type'] == 'uil':
-                print("Evaluating on test sets...")
-                test_ood_metrics = evaluate_uil(model, test_loader, device, metric_type)
-                test_id_metrics = evaluate_uil(model, id_test_loader, device, metric_type)
-            elif config['model']['type'] == 'moe_uil':
-                test_ood_metrics = evaluate_moeuil(model, test_loader, device, metric_type, epoch, config)
-                test_id_metrics = evaluate_moeuil(model, id_test_loader, device, metric_type, epoch, config)
+                test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type, epoch, config)
+                test_id_metrics = evaluate_moe(model, id_test_loader, device, metric_type, epoch, config)
             else:
                 test_ood_metrics = evaluate(model, test_loader, device, metric_type)
                 test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
