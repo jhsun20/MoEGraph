@@ -23,8 +23,8 @@ dataset:
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 32
-  num_workers: 8
-  domain: 'size' # basis or size
+  num_workers: 4
+  domain: 'basis' # basis or size
 
 # Model configuration
 model:

@@ -5,6 +5,9 @@ from models.gnn_models import GCN, GIN, GraphSAGE, GINEncoderWithEdgeWeight
 
 from torch_geometric.nn import global_mean_pool
 from torch_geometric.utils import to_dense_adj
+from torch_geometric.data import Data
+import math
+
 
 class Experts(nn.Module):
     def __init__(self, config, dataset_info, rho=0.5):
@@ -63,6 +66,17 @@ class Experts(nn.Module):
         """
         x, edge_index, batch = data.x, data.edge_index, data.batch
         Z = self.causal_encoder(x, edge_index, batch=batch)
+
+        # build original graph for structure comparison (no features needed)
+        orig_edge_attr = torch.ones(edge_index.size(1), device=edge_index.device)
+        orig_node_weight = torch.ones(x.size(0), device=x.device)
+
+        original_data = Data(
+            edge_index=edge_index,
+            batch=batch,
+            edge_attr=orig_edge_attr,   # unmasked edges
+            node_weight=orig_node_weight # unmasked nodes
+        )
         
         node_masks = []
         edge_masks = []
@@ -77,7 +91,6 @@ class Experts(nn.Module):
             edge_mask = torch.sigmoid(self.expert_edge_masks[expert_idx](edge_feat))
             feat_mask = torch.sigmoid(self.expert_feat_masks[expert_idx](Z))  # (N, D)
             
-
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
             feat_masks.append(feat_mask)
@@ -145,7 +158,23 @@ class Experts(nn.Module):
                 #sem_loss = torch.tensor(0.0, device=expert_logit.device)
                 sem_loss_list.append(sem_loss)
 
-                str_loss = self.compute_structural_invariance_loss(expert_h_stable, target, edge_index, batch, expert_node_mask, expert_edge_mask)
+                #str_loss = self.compute_structural_invariance_loss(expert_h_stable, target, edge_index, batch, expert_node_mask, expert_edge_mask)
+                # structural masked graph for THIS expert (structure-only)
+                masked_data = Data(
+                    edge_index=edge_index,
+                    batch=batch,
+                    edge_attr=expert_edge_mask.view(-1),   # (E, 1) -> (E,)
+                    node_weight=expert_node_mask.view(-1)  # (N, 1) -> (N,)
+                )
+
+                # === structural loss here (choose 'randomwalk' or 'graphon') ===
+                str_loss = self.compute_structural_invariance_loss(
+                    original_data,
+                    masked_data,
+                    mode="randomwalk",     # or "graphon"
+                    rw_max_steps=4,        # tweak if needed
+                    graphon_bins=4
+                )
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
@@ -193,9 +222,9 @@ class Experts(nn.Module):
             return F.cross_entropy(pred, target)
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask):
-        rho_node = torch.clamp(self.rho_node, 0.0, 1.0)
-        rho_edge = torch.clamp(self.rho_edge, 0.0, 1.0)
-        rho_feat = torch.clamp(self.rho_feat, 0.0, 1.0)
+        rho_node = torch.clamp(self.rho_node, 0.2, 0.8)
+        rho_edge = torch.clamp(self.rho_edge, 0.2, 0.8)
+        rho_feat = torch.clamp(self.rho_feat, 0.2, 0.8)
 
         # Mean deviation from target rho
         node_dev = (node_mask.mean() - rho_node).pow(2)
@@ -212,9 +241,6 @@ class Experts(nn.Module):
 
         return node_dev + edge_dev + feat_dev + l0_dev
 
-    def compute_semantic_invariance_loss2(self, h_stable, h_orig):
-        return F.mse_loss(h_stable, h_orig)
-    
     def compute_semantic_invariance_loss(self, h_stable, h_orig, target):
         """
         Match h_stable to its class prototype from h_orig.
@@ -233,7 +259,133 @@ class Experts(nn.Module):
 
         return loss / max(1, len(unique_labels))
 
-    def compute_structural_invariance_loss(self, h_stable, labels, edge_index, batch, node_mask, edge_mask, mode="embedding", topk=10):
+    def compute_structural_invariance_loss(
+        self,
+        data_orig: Data,
+        data_masked: Data,
+        mode: str = "randomwalk",
+        rw_max_steps: int = 8,
+        graphon_bins: int = 8,
+    ):
+        """
+        Structural invariance between original and masked graphs.
+        Returns MSE between per-graph structural vectors (B, d).
+        Supports modes: 'randomwalk' or 'graphon'.
+        Expects:
+        - data.edge_index (batched)
+        - data.batch (node->graph mapping)
+        - Optional: data.edge_attr as edge weights
+        - Optional: data.node_weight as node mask (soft)
+        """
+        if mode == "randomwalk":
+            s_orig = self._rw_struct_vec_batched(data_orig, rw_max_steps)   # (B, T_agg)
+            s_mask = self._rw_struct_vec_batched(data_masked, rw_max_steps) # (B, T_agg)
+        elif mode == "graphon":
+            s_orig = self._graphon_vec_batched(data_orig, graphon_bins)     # (B, bins*bins)
+            s_mask = self._graphon_vec_batched(data_masked, graphon_bins)   # (B, bins*bins)
+        else:
+            raise ValueError("Unsupported mode: choose 'randomwalk' or 'graphon'.")
+
+        return F.mse_loss(s_orig, s_mask)  # averages over batch & dims
+
+    def _rw_struct_vec_batched(self, data: Data, rw_max_steps: int):
+        """
+        Returns (B, T) vector of average return probabilities across nodes,
+        for T walk lengths (1..rw_max_steps). Uses edge weights and node weights if present.
+        """
+        A_list = self._dense_adj_per_graph(data)
+        out = []
+        for A in A_list:
+            n = A.size(0)
+            if n == 0:
+                out.append(torch.zeros(rw_max_steps, device=A.device))
+                continue
+            deg = A.sum(dim=1, keepdim=True)  # (n,1)
+            deg[deg == 0] = 1
+            P = A / deg
+
+            P_power = torch.eye(n, device=A.device)
+            feats = []
+            for _t in range(rw_max_steps):
+                P_power = P_power @ P  # P^{t+1}
+                # return probability diag(P^t)
+                feats.append(torch.diag(P_power))  # (n,)
+
+            # (n,T) -> mean over nodes -> (T,)
+            feats = torch.stack(feats, dim=1).mean(dim=0)
+            out.append(feats)
+
+        return torch.stack(out, dim=0)  # (B, T)
+    
+    # --- SHARED: build dense adj per graph (respects edge_attr & node_weight) ---
+    def _dense_adj_per_graph(self, data: Data):
+        """
+        Returns a list of dense adjacency matrices [A_0, ..., A_{B-1}] (each (n_i, n_i)),
+        where A_i applies edge weights (edge_attr) and soft node masking (node_weight) if provided.
+        """
+        # Build weighted adjacency for the whole batch; shape (B, N_max, N_max)
+        if hasattr(data, "edge_attr") and data.edge_attr is not None:
+            adj = to_dense_adj(data.edge_index, batch=data.batch, edge_attr=data.edge_attr).squeeze(0)
+        else:
+            adj = to_dense_adj(data.edge_index, batch=data.batch).squeeze(0)  # (B, N_max, N_max)
+
+        B = int(data.batch.max().item()) + 1 if data.batch is not None else 1
+        A_list = []
+        for b in range(B):
+            # mask per-graph valid nodes
+            node_idx = (data.batch == b).nonzero(as_tuple=False).view(-1)
+            n = node_idx.numel()
+            A = adj[b, :n, :n]  # crop to actual size
+
+            # apply soft node mask if provided
+            if hasattr(data, "node_weight") and data.node_weight is not None:
+                w = data.node_weight[node_idx].view(n, 1)  # (n,1)
+                # soft delete: A' = diag(w) * A * diag(w)
+                A = (A * w) * w.T
+
+            A_list.append(A)
+        return A_list  # list of (n_i, n_i)
+
+    def _graphon_vec_batched(self, data: Data, graphon_bins: int):
+        """
+        Returns (B, bins*bins) graphon-like vector per graph via degree-sorted block averages.
+        Respects edge weights and soft node weights if provided.
+        """
+        A_list = self._dense_adj_per_graph(data)
+        vecs = []
+        for A in A_list:
+            n = A.size(0)
+            if n == 0:
+                vecs.append(torch.zeros(graphon_bins * graphon_bins, device=A.device))
+                continue
+
+            degrees = A.sum(dim=1)  # weighted degree after node masking
+            idx = torch.argsort(degrees, descending=True)
+            A_sorted = A[idx][:, idx]
+
+            bin_size = max(1, math.ceil(n / graphon_bins))
+            G = torch.zeros((graphon_bins, graphon_bins), device=A.device)
+            for i in range(graphon_bins):
+                i0, i1 = i * bin_size, min((i + 1) * bin_size, n)
+                if i0 >= n:
+                    break
+                for j in range(graphon_bins):
+                    j0, j1 = j * bin_size, min((j + 1) * bin_size, n)
+                    if j0 >= n:
+                        break
+                    block = A_sorted[i0:i1, j0:j1]
+                    if block.numel() > 0:
+                        G[i, j] = block.mean()
+            vecs.append(G.flatten())
+
+        return torch.stack(vecs, dim=0)  # (B, bins*bins)
+
+    
+    def compute_semantic_invariance_loss2(self, h_stable, h_orig):
+        return F.mse_loss(h_stable, h_orig)
+    
+
+    def compute_structural_invariance_loss2(self, h_stable, labels, edge_index, batch, node_mask, edge_mask, mode="embedding", topk=10):
         """
         Computes structural invariance loss.
         
@@ -315,3 +467,4 @@ class Experts(nn.Module):
 
         else:
             raise ValueError(f"Unsupported mode: {mode}. Choose 'laplacian' or 'embedding'.")
+        
