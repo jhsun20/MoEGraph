@@ -4,7 +4,6 @@
 CONFIGS=(
   "config/config_div_sparse_hiv.yaml"
   "config/config_div_sparse_motif.yaml"
-  
 )
 
 # Run each config sequentially
