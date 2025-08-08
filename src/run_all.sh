@@ -2,8 +2,9 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-  "config/config_nodiv_nosparse_tuning.yaml"
-  "config/config_div_sparse_tuning.yaml"
+  "config/config_div_sparse_hiv.yaml"
+  "config/config_div_sparse_motif.yaml"
+  
 )
 
 # Run each config sequentially
