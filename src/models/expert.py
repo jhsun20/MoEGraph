@@ -90,9 +90,13 @@ class Experts(nn.Module):
         edge_feat = torch.cat([Z[edge_index[0]], Z[edge_index[1]]], dim=1)
 
         for expert_idx in range(self.num_experts):
-            node_mask = torch.sigmoid(self.expert_node_masks[expert_idx](Z))
-            edge_mask = torch.sigmoid(self.expert_edge_masks[expert_idx](edge_feat))
-            feat_mask = torch.sigmoid(self.expert_feat_masks[expert_idx](Z))  # (N, D)
+            node_mask_logits = self.expert_node_masks[expert_idx](Z)
+            edge_mask_logits = self.expert_edge_masks[expert_idx](edge_feat)
+            feat_mask_logits = self.expert_feat_masks[expert_idx](Z)
+
+            node_mask = self._hard_concrete_mask(node_mask_logits, temperature=0.1)
+            edge_mask = self._hard_concrete_mask(edge_mask_logits, temperature=0.1)
+            feat_mask = self._hard_concrete_mask(feat_mask_logits, temperature=0.1)
             
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
@@ -195,6 +199,28 @@ class Experts(nn.Module):
             })
 
         return output
+    
+    def _hard_concrete_mask(self, logits, temperature=0.1):
+        """
+        Sample a hard 0/1 mask from logits with straight-through gradient.
+        Args:
+            logits: (N, 1) or (N, D) pre-activation mask values
+            temperature: controls smoothness; lower = harder
+        Returns:
+            mask: hard {0,1} mask (same shape as logits) with gradient
+        """
+        # Add Gumbel noise
+        uniform_noise = torch.rand_like(logits)
+        gumbel_noise = -torch.log(-torch.log(uniform_noise + 1e-20) + 1e-20)
+
+        # Continuous sample in (0,1)
+        y_soft = torch.sigmoid((logits + gumbel_noise) / temperature)
+
+        # Hard binary sample
+        y_hard = (y_soft > 0.5).float()
+
+        # Straight-through: gradients flow through y_soft
+        return y_hard + (y_soft - y_soft.detach())
 
     def compute_classification_loss(self, pred, target, use_weights=False):
         """
@@ -226,9 +252,9 @@ class Experts(nn.Module):
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask, expert_idx: int):
         # clamp each expert's rho into [0.2, 0.8] as you wanted
-        rho_node = torch.clamp(self.rho_node[expert_idx], 0.05, 0.3)
-        rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.05, 0.3)
-        rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.05, 0.3)
+        rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.8)
+        rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.8)
+        rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.2, 0.8)
 
         # Mean deviation from target rho
         node_dev = (node_mask.mean() - rho_node).pow(2)
