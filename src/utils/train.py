@@ -595,8 +595,8 @@ def train(config, trial=None):
                 test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
             
             # Log test metrics with the best epoch
-            logger.log_metrics(test_id_metrics, best_epoch, phase="test_id")
             logger.log_metrics(test_ood_metrics, best_epoch, phase="test_ood")
+            logger.log_metrics(test_id_metrics, best_epoch, phase="test_id")
 
             # if (config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil'):
             #     logger.log_metrics({
