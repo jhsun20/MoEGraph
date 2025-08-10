@@ -161,7 +161,7 @@ class Experts(nn.Module):
                 expert_node_mask = node_masks[:, expert_idx, :]
                 expert_edge_mask = edge_masks[:, expert_idx, :]
                 expert_feat_mask = feat_masks[:, expert_idx, :]
-                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx, fixed_rho=True)
+                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx, use_fixed_rho=True)
                 reg_loss_list.append(reg_loss)
 
                 sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig, target)
