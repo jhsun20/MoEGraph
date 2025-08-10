@@ -178,8 +178,7 @@ class Experts(nn.Module):
                 )
 
                 # === structural loss here (choose 'randomwalk' or 'graphon') ===
-                str_loss = self.compute_structural_invariance_loss(data_masked=masked_data, labels=data.y, mode='randomwalk')
-
+                str_loss = self.compute_structural_invariance_loss(masked_data, target, mode="randomwalk", rw_max_steps=8, graphon_bins=8)
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
@@ -315,8 +314,9 @@ class Experts(nn.Module):
 
     def compute_structural_invariance_loss(self, data_masked: Data, labels: torch.Tensor, mode: str = "randomwalk", rw_max_steps: int = 8, graphon_bins: int = 8):
         """
-        Structural invariance between causal subgraphs (masked graphs) of the same class.
-        
+        Structural invariance between causal subgraphs (masked graphs) of the same class,
+        weighted by inverse class frequency to handle imbalance.
+
         Args:
             data_masked: PyG Data (batched masked graphs, already has node_weight applied)
             labels: (B,) tensor of graph-level labels
@@ -354,6 +354,36 @@ class Experts(nn.Module):
             loss = torch.tensor(0.0, device=labels.device)
 
         return loss
+
+
+    def _rw_struct_vec_batched(self, data: Data, rw_max_steps: int):
+        """
+        Returns (B, T) vector of average return probabilities across nodes,
+        for T walk lengths (1..rw_max_steps). Uses edge weights and node weights if present.
+        """
+        A_list = self._dense_adj_per_graph(data)
+        out = []
+        for A in A_list:
+            n = A.size(0)
+            if n == 0:
+                out.append(torch.zeros(rw_max_steps, device=A.device))
+                continue
+            deg = A.sum(dim=1, keepdim=True)  # (n,1)
+            deg[deg == 0] = 1
+            P = A / deg
+
+            P_power = torch.eye(n, device=A.device)
+            feats = []
+            for _t in range(rw_max_steps):
+                P_power = P_power @ P  # P^{t+1}
+                # return probability diag(P^t)
+                feats.append(torch.diag(P_power))  # (n,)
+
+            # (n,T) -> mean over nodes -> (T,)
+            feats = torch.stack(feats, dim=1).mean(dim=0)
+            out.append(feats)
+
+        return torch.stack(out, dim=0)  # (B, T)
     
     # --- SHARED: build dense adj per graph (respects edge_attr & node_weight) ---
     def _dense_adj_per_graph(self, data: Data):
