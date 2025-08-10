@@ -220,7 +220,7 @@ class Experts(nn.Module):
         # Straight-through: gradients flow through y_soft
         return y_hard + (y_soft - y_soft.detach())
 
-    def compute_classification_loss(self, pred, target, use_weights=False):
+    def compute_classification_loss(self, pred, target, use_weights=True):
         """
         Computes cross-entropy loss with optional class imbalance correction.
         
@@ -340,7 +340,8 @@ class Experts(nn.Module):
             class_mean = vecs.mean(dim=0, keepdim=True)
             class_loss = ((vecs - class_mean) ** 2).mean()
 
-            weight = 1.0 / float(idx.numel())  # inverse frequency weight
+            #weight = 1.0 / float(idx.numel())  # inverse frequency weight
+            weight = 1.0
             loss += weight * class_loss
             total_weight += weight
 
