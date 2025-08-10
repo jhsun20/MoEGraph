@@ -161,7 +161,7 @@ class Experts(nn.Module):
                 expert_node_mask = node_masks[:, expert_idx, :]
                 expert_edge_mask = edge_masks[:, expert_idx, :]
                 expert_feat_mask = feat_masks[:, expert_idx, :]
-                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx)
+                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx, fixed_rho=True)
                 reg_loss_list.append(reg_loss)
 
                 sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig, target)
@@ -253,25 +253,40 @@ class Experts(nn.Module):
         else:
             return F.cross_entropy(pred, target)
 
-    def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask, expert_idx: int):
-        # clamp each expert's rho into [0.2, 0.8] as you wanted
-        rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.8)
-        rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.8)
-        rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.2, 0.8)
+    def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask, expert_idx: int, use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5),):
+        """
+        Size regularization for masks.
+
+        Args:
+            use_fixed_rho: if True, ignore learnable rhos and use the same 3 values
+                        (node, edge, feat) for all experts.
+            fixed_rho_vals: (rho_node, rho_edge, rho_feat), each in [0,1].
+        """
+
+        if use_fixed_rho:
+            rho_node, rho_edge, rho_feat = fixed_rho_vals
+            # clamp to valid range
+            rho_node = float(min(max(rho_node, 0.0), 1.0))
+            rho_edge = float(min(max(rho_edge, 0.0), 1.0))
+            rho_feat = float(min(max(rho_feat, 0.0), 1.0))
+        else:
+            # original learnable behavior (per expert), kept as-is
+            rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.8)
+            rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.8)
+            rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.2, 0.8)
 
         # Mean deviation from target rho
-        node_dev = (node_mask.mean() - rho_node).pow(2)
-        edge_dev = (edge_mask.mean() - rho_edge).pow(2)
-        feat_dev = (feat_mask.mean() - rho_feat).pow(2)
+        node_dev = (node_mask.mean() - rho_node) ** 2
+        edge_dev = (edge_mask.mean() - rho_edge) ** 2
+        feat_dev = (feat_mask.mean() - rho_feat) ** 2
 
-        # Sparsity surrogate: use mean(mask) instead of (mask > 0)
+        # L0 surrogate via mean
         node_l0 = node_mask.mean()
         edge_l0 = edge_mask.mean()
         feat_l0 = feat_mask.mean()
-        l0_dev = (node_l0 - rho_node).pow(2) + (edge_l0 - rho_edge).pow(2) + (feat_l0 - rho_feat).pow(2)
+        l0_dev = (node_l0 - rho_node) ** 2 + (edge_l0 - rho_edge) ** 2 + (feat_l0 - rho_feat) ** 2
 
         return node_dev + edge_dev + feat_dev + l0_dev
-
 
     def compute_semantic_invariance_loss(self, h_stable, h_orig, target):
         """
