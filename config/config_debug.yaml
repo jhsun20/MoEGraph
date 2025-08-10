@@ -32,7 +32,7 @@ model:
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
-  weight_str: 0.0
+  weight_str: 1.0
   weight_sem: 1.0
   weight_reg: 1.0
   weight_ce: 1.0
@@ -67,4 +67,4 @@ gate:
   model: "GIN"
   depth: 2
   hidden_dim: 32
-  train_after: 5
+  train_after: 1

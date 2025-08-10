@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.expert import Experts
-from models.gnn_models import GIN
+from models.gnn_models import GIN, GINEncoderWithEdgeWeight
 from entmax import entmax15, entmax_bisect
 from torch_geometric.data import Batch, Data
+from torch_geometric.nn import global_mean_pool
+
 
 class MoE(nn.Module):
     def __init__(self, config, dataset_info):
@@ -37,7 +39,13 @@ class MoE(nn.Module):
         # Instantiate gating mechanism
         gate_hidden_dim = config['gate']['hidden_dim']
         gate_depth = config['gate']['depth']
-        self.gate = GIN(num_features, self.num_experts, gate_hidden_dim, gate_depth, dropout, pooling)
+        gate_in_dim = num_features + (2 * self.num_experts)
+        self.gate = GINEncoderWithEdgeWeight(gate_in_dim, gate_hidden_dim, gate_depth, dropout, train_eps=True)
+        self.gate_mlp = nn.Sequential(
+            nn.Linear(gate_hidden_dim, gate_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(gate_hidden_dim, self.num_experts)
+        )
         self.entmax_alpha = config['gate']['entmax_alpha']
 
         if self.verbose:
@@ -202,7 +210,12 @@ class MoE(nn.Module):
                             1.0 / self.num_experts,
                             device=data.x.device)
         else:
-            return self.gate(data)  # (batch_size, num_experts)
+            x = data.x
+            edge_index = data.edge_index
+            batch = data.batch
+            h = self.gate(x, edge_index, batch=batch)
+            h = global_mean_pool(h, batch)
+            return self.gate_mlp(h)  # (batch_size, num_experts)
         
     def compute_gate_weighted_ce_loss(self, stacked_logits, targets, gate_weights):
         """
