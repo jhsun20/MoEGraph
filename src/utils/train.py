@@ -174,23 +174,37 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
     em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
     fm = aggregated_outputs.get('feat_masks', None)    # (N, K, D)
+    node_batch = aggregated_outputs.get('cached_masks', None).get('batch', None)  # (N,)
+    edge_batch = aggregated_outputs.get('cached_masks', None).get('edge_batch', None)  # (E,)
 
-    def _per_expert_drop_stats(tensor, reduce_dims):
-        # keep-rate = mean(mask); drop-rate = 1 - keep
-        keep = tensor.float().mean(dim=reduce_dims)         # (K,)
-        drop = 1.0 - keep
-        # std across the same reduce_dims
-        std = tensor.float().std(dim=reduce_dims, unbiased=False)  # (K,)
-        return drop, std
+    def _per_expert_drop_stats_per_graph(mask, batch_idx, is_feat=False):
+        if mask is None or batch_idx is None:
+            return None, None
+        x = mask.float()
+        if is_feat:
+            x = x.mean(dim=2)      # (N, K, D) -> (N, K)
+        else:
+            x = x.squeeze(-1)      # (N_or_E, K, 1) -> (N_or_E, K)
 
-    if nm is not None and em is not None and fm is not None:
-        # Nodes/edges: (N/E, K, 1) -> reduce over dims (0, 2)
-        node_drop, node_std = _per_expert_drop_stats(nm, reduce_dims=(0, 2))
-        edge_drop, edge_std = _per_expert_drop_stats(em, reduce_dims=(0, 2))
-        # Features: (N, K, D) -> reduce over dims (0, 2)
-        feat_drop, feat_std = _per_expert_drop_stats(fm, reduce_dims=(0, 2))
+        num_graphs = int(batch_idx.max().item()) + 1
+        drop_mean = []
+        drop_std = []
+        for k in range(x.size(1)):
+            keep_sum = torch.zeros(num_graphs, device=x.device)
+            count_sum = torch.zeros(num_graphs, device=x.device)
+            keep_sum.scatter_add_(0, batch_idx, x[:, k])
+            count_sum.scatter_add_(0, batch_idx, torch.ones_like(x[:, k]))
+            keep_pg = keep_sum / (count_sum + 1e-8)
+            drop_pg = 1.0 - keep_pg
+            drop_mean.append(drop_pg.mean())
+            drop_std.append(drop_pg.std(unbiased=False))
+        return torch.stack(drop_mean), torch.stack(drop_std)
 
-        print("\nPer-expert mask drop rates (mean ± std) from last batch:")
+    if nm is not None and em is not None and fm is not None and node_batch is not None and edge_batch is not None:
+        node_drop, node_std = _per_expert_drop_stats_per_graph(nm, node_batch, is_feat=False)
+        edge_drop, edge_std = _per_expert_drop_stats_per_graph(em, edge_batch, is_feat=False)
+        feat_drop, feat_std = _per_expert_drop_stats_per_graph(fm, node_batch, is_feat=True)
+        print("\nPer-expert mask drop rates across graphs (mean ± std) from last batch:")
         for i in range(node_drop.numel()):
             print(
                 f"  Expert {i}: "
@@ -199,7 +213,8 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
                 f"feat={feat_drop[i].item():.3f}±{feat_std[i].item():.3f}"
             )
     else:
-        print("\n[Warn] Mask tensors not found in aggregated_outputs; skip mask stats.")
+        print("\n[Warn] Mask tensors or batch indices not found; skip per-graph mask stats.")
+
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -279,23 +294,37 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
     em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
     fm = aggregated_outputs.get('feat_masks', None)    # (N, K, D)
+    node_batch = aggregated_outputs.get('cached_masks', None).get('batch', None)  # (N,)
+    edge_batch = aggregated_outputs.get('cached_masks', None).get('edge_batch', None)  # (E,)
 
-    def _per_expert_drop_stats(tensor, reduce_dims):
-        # keep-rate = mean(mask); drop-rate = 1 - keep
-        keep = tensor.float().mean(dim=reduce_dims)         # (K,)
-        drop = 1.0 - keep
-        # std across the same reduce_dims
-        std = tensor.float().std(dim=reduce_dims, unbiased=False)  # (K,)
-        return drop, std
+    def _per_expert_drop_stats_per_graph(mask, batch_idx, is_feat=False):
+        if mask is None or batch_idx is None:
+            return None, None
+        x = mask.float()
+        if is_feat:
+            x = x.mean(dim=2)      # (N, K, D) -> (N, K)
+        else:
+            x = x.squeeze(-1)      # (N_or_E, K, 1) -> (N_or_E, K)
 
-    if nm is not None and em is not None and fm is not None:
-        # Nodes/edges: (N/E, K, 1) -> reduce over dims (0, 2)
-        node_drop, node_std = _per_expert_drop_stats(nm, reduce_dims=(0, 2))
-        edge_drop, edge_std = _per_expert_drop_stats(em, reduce_dims=(0, 2))
-        # Features: (N, K, D) -> reduce over dims (0, 2)
-        feat_drop, feat_std = _per_expert_drop_stats(fm, reduce_dims=(0, 2))
+        num_graphs = int(batch_idx.max().item()) + 1
+        drop_mean = []
+        drop_std = []
+        for k in range(x.size(1)):
+            keep_sum = torch.zeros(num_graphs, device=x.device)
+            count_sum = torch.zeros(num_graphs, device=x.device)
+            keep_sum.scatter_add_(0, batch_idx, x[:, k])
+            count_sum.scatter_add_(0, batch_idx, torch.ones_like(x[:, k]))
+            keep_pg = keep_sum / (count_sum + 1e-8)
+            drop_pg = 1.0 - keep_pg
+            drop_mean.append(drop_pg.mean())
+            drop_std.append(drop_pg.std(unbiased=False))
+        return torch.stack(drop_mean), torch.stack(drop_std)
 
-        print("\nPer-expert mask drop rates (mean ± std) from last batch:")
+    if nm is not None and em is not None and fm is not None and node_batch is not None and edge_batch is not None:
+        node_drop, node_std = _per_expert_drop_stats_per_graph(nm, node_batch, is_feat=False)
+        edge_drop, edge_std = _per_expert_drop_stats_per_graph(em, edge_batch, is_feat=False)
+        feat_drop, feat_std = _per_expert_drop_stats_per_graph(fm, node_batch, is_feat=True)
+        print("\nPer-expert mask drop rates across graphs (mean ± std) from last batch:")
         for i in range(node_drop.numel()):
             print(
                 f"  Expert {i}: "
@@ -304,7 +333,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
                 f"feat={feat_drop[i].item():.3f}±{feat_std[i].item():.3f}"
             )
     else:
-        print("\n[Warn] Mask tensors not found in aggregated_outputs; skip mask stats.")
+        print("\n[Warn] Mask tensors or batch indices not found; skip per-graph mask stats.")
 
     gc.collect()
     torch.cuda.empty_cache()

@@ -130,7 +130,8 @@ class Experts(nn.Module):
             'h_stable_list': h_stable_list,
             'expert_logits': expert_logits,
             'edge_index': edge_index,
-            'batch': batch
+            'batch': batch,
+            'edge_batch': batch[edge_index[0]]
         }
 
         output = {
@@ -287,12 +288,7 @@ class Experts(nn.Module):
         edge_dev = ((edge_keep_pg - rho_edge) ** 2).mean()
         feat_dev = ((feat_keep_pg - rho_feat) ** 2).mean()
 
-        # ---- L0 surrogate: same as keep-rate for sigmoid masks ----
-        node_l0_dev = ((node_keep_pg - rho_node) ** 2).mean()
-        edge_l0_dev = ((edge_keep_pg - rho_edge) ** 2).mean()
-        feat_l0_dev = ((feat_keep_pg - rho_feat) ** 2).mean()
-
-        return node_dev + edge_dev + feat_dev + node_l0_dev + edge_l0_dev + feat_l0_dev
+        return node_dev + edge_dev + feat_dev
 
     def compute_semantic_invariance_loss(self, h_stable, h_orig, target):
         """
@@ -447,92 +443,3 @@ class Experts(nn.Module):
             vecs.append(G.flatten())
 
         return torch.stack(vecs, dim=0)  # (B, bins*bins)
-
-    
-    def compute_semantic_invariance_loss2(self, h_stable, h_orig):
-        return F.mse_loss(h_stable, h_orig)
-    
-
-    def compute_structural_invariance_loss2(self, h_stable, labels, edge_index, batch, node_mask, edge_mask, mode="embedding", topk=10):
-        """
-        Computes structural invariance loss.
-        
-        Args:
-            h_stable: Tensor (B, D), graph-level embeddings from causal subgraphs
-            labels: Tensor (B,), integer class labels
-            edge_index: Tensor (2, E), edge list of the input graph
-            batch: Tensor (N,), mapping nodes to graphs
-            node_mask: Tensor (N, 1), soft node mask ∈ [0,1]
-            edge_mask: Tensor (E, 1), soft edge mask ∈ [0,1]
-            mode: "laplacian" or "embedding"
-            topk: number of eigenvalues to use for Laplacian comparison
-
-        Returns:
-            Scalar loss (tensor)
-        """
-        device = h_stable.device
-        loss = torch.tensor(0.0, device=device)
-        unique_labels = labels.unique()
-
-        if mode == "embedding":
-            # === Embedding-based structural invariance (variance version) ===
-            count = 0
-            for lbl in unique_labels:
-                indices = (labels == lbl).nonzero(as_tuple=False).squeeze()
-                if indices.numel() < 2:
-                    continue
-                h_group = h_stable[indices]  # (B_lbl, D)
-                mean = h_group.mean(dim=0)   # (D,)
-                var = ((h_group - mean) ** 2).mean()  # scalar
-                loss += var
-                count += 1
-
-            return loss / count if count > 0 else torch.tensor(0.0, device=device)
-
-        elif mode == "laplacian":
-            # === Laplacian spectrum-based structural invariance ===
-            # print(f"Computing Laplacian spectrum-based structural invariance.")
-            adj_dense = to_dense_adj(edge_index, batch=batch, edge_attr=edge_mask.view(-1)).squeeze(0)  # (B, N, N)
-            if adj_dense.dim() == 2:
-                adj_dense = adj_dense.unsqueeze(0)  # (1, N, N)
-
-            spectra_by_label = {}
-
-            for i in range(h_stable.size(0)):
-                A = adj_dense[i]
-                if A.size(0) != A.size(1):
-                    continue
-
-                deg = A.sum(dim=-1)
-                D = torch.diag(deg)
-                L = D - A
-
-                try:
-                    eigvals = torch.linalg.eigvalsh(L)
-                    topk_eigs = eigvals[:topk]
-                except RuntimeError as e:
-                    if "linalg.eigh" in str(e):
-                        # Skip this ill-conditioned graph
-                        continue
-                    else:
-                        raise e
-
-                lbl = labels[i].item()
-                if lbl not in spectra_by_label:
-                    spectra_by_label[lbl] = []
-                spectra_by_label[lbl].append(topk_eigs)
-                # print(f"Graph {i} with label {lbl}: top-{topk} eigenvalues = {topk_eigs}")
-
-            for lbl, spectra in spectra_by_label.items():
-                if len(spectra) < 2:
-                    continue
-                spectra_stack = torch.stack(spectra)  # (B_lbl, k)
-                mean_spectrum = spectra_stack.mean(dim=0)  # (k,)
-                var = ((spectra_stack - mean_spectrum)**2).mean()
-                loss += var
-
-            return loss / len(spectra_by_label) if spectra_by_label else torch.tensor(0.0, device=device)
-
-        else:
-            raise ValueError(f"Unsupported mode: {mode}. Choose 'laplacian' or 'embedding'.")
-        

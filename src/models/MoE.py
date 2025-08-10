@@ -105,22 +105,20 @@ class MoE(nn.Module):
             aggregated_sem_loss = torch.tensor(0.0, device=stacked_logits.device)
             aggregated_str_loss = torch.tensor(0.0, device=stacked_logits.device)
             
-            if shared_output['loss_ce_list'] is not None:
-                # Get expert-specific losses from shared model
-                ce_loss_list = shared_output['loss_ce_list']  # (num_experts,)
-                reg_loss_list = shared_output['loss_reg_list']  # (num_experts,)
-                sem_loss_list = shared_output['loss_sem_list']  # (num_experts,)
-                str_loss_list = shared_output['loss_str_list']  # (num_experts,)
-                
-                # Average gate weights across batch for loss aggregation
-                avg_gate_weights = gate_weights.squeeze(-1).mean(dim=1)  # (num_experts,)
-                
-                # Weighted aggregation of expert losses
-                for i in range(self.num_experts):
-                    weight = avg_gate_weights[i]
-                    aggregated_reg_loss += weight * reg_loss_list[i]
-                    aggregated_sem_loss += weight * sem_loss_list[i]
-                    aggregated_str_loss += weight * str_loss_list[i]
+            # Get expert-specific losses from shared model
+            reg_loss_list = shared_output['loss_reg_list']  # (num_experts,)
+            sem_loss_list = shared_output['loss_sem_list']  # (num_experts,)
+            str_loss_list = shared_output['loss_str_list']  # (num_experts,)
+            
+            # Average gate weights across batch for loss aggregation
+            avg_gate_weights = gate_weights.squeeze(-1).mean(dim=1)  # (num_experts,)
+            
+            # Weighted aggregation of expert losses
+            for i in range(self.num_experts):
+                weight = avg_gate_weights[i]
+                aggregated_reg_loss += weight * reg_loss_list[i]
+                aggregated_sem_loss += weight * sem_loss_list[i]
+                aggregated_str_loss += weight * str_loss_list[i]
 
             # Compute diversity and load balance losses
             diversity_loss = self.compute_diversity_loss(shared_output)
@@ -148,7 +146,8 @@ class MoE(nn.Module):
                 'expert_logits': expert_logits,  # Keep expert logits for analysis
                 'node_masks': shared_output['node_masks'],
                 'edge_masks': shared_output['edge_masks'],
-                'feat_masks': shared_output['feat_masks']
+                'feat_masks': shared_output['feat_masks'],
+                'cached_masks': shared_output['cached_masks']
             }
 
         else:
