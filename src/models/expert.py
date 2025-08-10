@@ -162,10 +162,10 @@ class Experts(nn.Module):
                 expert_node_mask = node_masks[:, expert_idx, :]
                 expert_edge_mask = edge_masks[:, expert_idx, :]
                 expert_feat_mask = feat_masks[:, expert_idx, :]
-                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx, node_batch=batch, edge_batch=batch[edge_index[0]], use_fixed_rho=True)
+                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx, node_batch=batch, edge_batch=batch[edge_index[0]], use_fixed_rho=False)
                 reg_loss_list.append(reg_loss)
 
-                sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig, target)
+                sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, target)
                 #sem_loss = torch.tensor(0.0, device=expert_logit.device)
                 sem_loss_list.append(sem_loss)
 
@@ -179,7 +179,7 @@ class Experts(nn.Module):
                 )
 
                 # === structural loss here (choose 'randomwalk' or 'graphon') ===
-                str_loss = self.compute_structural_invariance_loss(masked_data, target, mode="graphon", rw_max_steps=8, graphon_bins=8)
+                str_loss = self.compute_structural_invariance_loss(masked_data, target, mode="randomwalk", rw_max_steps=4, graphon_bins=4)
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
@@ -290,23 +290,63 @@ class Experts(nn.Module):
 
         return node_dev + edge_dev + feat_dev
 
-    def compute_semantic_invariance_loss(self, h_stable, h_orig, target):
+    def compute_semantic_invariance_loss(self, h_masked: torch.Tensor,
+                                        labels: torch.Tensor,
+                                        beta: float = 0.99,
+                                        normalize: bool = True,
+                                        var_floor: float = 0.0,
+                                        var_floor_weight: float = 0.0) -> torch.Tensor:
         """
-        Match h_stable to its class prototype from h_orig.
-        Prototypes are batch-wise (not EMA) for simplicity.
-        """
-        device = h_stable.device
-        loss = torch.tensor(0.0, device=device)
-        unique_labels = target.unique()
+        Semantic invariance on masked embeddings (GNN2 outputs).
+        Pulls same-class embeddings together using cosine to batch prototypes.
 
-        for lbl in unique_labels:
-            idx = (target == lbl).nonzero(as_tuple=False).squeeze()
-            if idx.numel() < 2:
+        Args:
+            h_masked: (B, d) masked graph embeddings from GNN2
+            labels:  (B,) int64 class labels
+            beta:    effective-number weighting param (0.9–0.999); set None to disable
+            normalize: L2-normalize embeddings before computing prototypes/similarity
+            var_floor: minimum desired stdev per embedding dim across the batch (0 disables)
+            var_floor_weight: weight for variance-floor penalty
+
+        Returns:
+            loss_sem: scalar tensor
+        """
+        h = F.normalize(h_masked, p=2, dim=1) if normalize else h_masked
+
+        unique = labels.unique()
+        loss = h.new_tensor(0.0)
+        total_w = h.new_tensor(0.0)
+
+        for c in unique:
+            idx = (labels == c).nonzero(as_tuple=False).view(-1)
+            n_c = int(idx.numel())
+            if n_c < 2:
                 continue
-            proto = h_orig[idx].mean(dim=0)  # class prototype
-            loss += F.mse_loss(h_stable[idx], proto)
 
-        return loss / max(1, len(unique_labels))
+            h_c = h[idx]                              # (n_c, d)
+            mu_c = F.normalize(h_c.mean(0, keepdim=True), p=2, dim=1) if normalize else h_c.mean(0, keepdim=True)
+            # cosine compactness to class prototype
+            sim = F.cosine_similarity(h_c, mu_c.expand_as(h_c), dim=1)   # (n_c,)
+            class_loss = 1.0 - sim.mean()
+
+            if beta is not None:
+                w_c = (1.0 - beta) / (1.0 - (beta ** n_c))
+            else:
+                w_c = 1.0
+
+            loss = loss + w_c * class_loss
+            total_w = total_w + w_c
+
+        loss = loss / torch.clamp(total_w, min=1.0)
+
+        # Optional: variance floor to prevent collapse (VICReg-lite style)
+        if var_floor_weight > 0.0 and h.size(0) > 1:
+            std_per_dim = h.std(dim=0, unbiased=False)
+            vf_penalty = F.relu(var_floor - std_per_dim).mean()
+            loss = loss + var_floor_weight * vf_penalty
+
+        return loss
+
 
     def compute_structural_invariance_loss(self, data_masked: Data, labels: torch.Tensor, mode: str = "randomwalk", rw_max_steps: int = 8, graphon_bins: int = 8):
         """
