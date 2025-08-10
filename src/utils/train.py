@@ -233,6 +233,8 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
+    all_top1_outputs = []
+    all_top2_outputs = []
     # Track expert usage
     gate_weight_accumulator = []
     if config['model']['parallel']:
@@ -255,6 +257,23 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         gate_weights = aggregated_outputs['gate_weights']
         gate_weights = gate_weights.squeeze(-1).T          # → (B, K)
         gate_weight_accumulator.append(gate_weights.cpu())
+
+        
+        expert_logits = aggregated_outputs['expert_logits']  # (B, K, C)
+
+        # --- Compute Top-1 ---
+        top1_idx = torch.argmax(gate_weights, dim=1)  # (B,)
+        top1_logits = expert_logits[torch.arange(batch_size, device=expert_logits.device), top1_idx, :]
+        all_top1_outputs.append(top1_logits.detach())
+
+        # --- Compute Top-2 ---
+        k2 = min(2, gate_weights.size(1))
+        top2_vals, top2_idx = torch.topk(gate_weights, k=k2, dim=1)  # (B, k2)
+        gather_idx = top2_idx.unsqueeze(-1).expand(-1, -1, expert_logits.size(-1))
+        selected_logits = torch.gather(expert_logits, dim=1, index=gather_idx)  # (B, k2, C)
+        w2 = top2_vals / (top2_vals.sum(dim=1, keepdim=True) + 1e-12)
+        top2_logits = (selected_logits * w2.unsqueeze(-1)).sum(dim=1)
+        all_top2_outputs.append(top2_logits.detach())
         
         # Logging
         total_loss += aggregated_outputs['loss_total'].item() * batch_size
@@ -279,7 +298,31 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     final_outputs = torch.cat(all_aggregated_outputs, dim=0)
     final_targets = torch.cat(all_targets, dim=0)
     metrics = compute_metrics(final_outputs, final_targets, metric_type)
-    
+
+    # Top-1 and Top-2 metrics
+    final_top1 = torch.cat(all_top1_outputs, dim=0)
+    final_top2 = torch.cat(all_top2_outputs, dim=0)
+    metrics_top1 = compute_metrics(final_top1, final_targets, metric_type)
+    metrics_top2 = compute_metrics(final_top2, final_targets, metric_type)
+
+    # Add them to metrics dict and print
+    for k, v in metrics_top1.items():
+        metrics[f"top1_{k}"] = v
+    for k, v in metrics_top2.items():
+        metrics[f"top2_{k}"] = v
+
+    print("\n--- Top-K Expert Metrics ---")
+    for k, v in metrics_top1.items():
+        if isinstance(v, (float, int)):
+            print(f"Top-1 {k}: {v:.4f}")
+        else:
+            print(f"Top-1 {k}: {v}")
+    for k, v in metrics_top2.items():
+        if isinstance(v, (float, int)):
+            print(f"Top-2 {k}: {v:.4f}")
+        else:
+            print(f"Top-2 {k}: {v}")
+        
     # Always include all losses in metrics
     metrics['loss'] = total_loss / len(loader.dataset)
     metrics['loss_ce'] = total_ce_loss / len(loader.dataset)

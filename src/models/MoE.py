@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from models.expert import Experts
 from models.gnn_models import GIN
 from entmax import entmax15, entmax_bisect
-from torch_geometric.data import Batch
+from torch_geometric.data import Batch, Data
 
 class MoE(nn.Module):
     def __init__(self, config, dataset_info):
@@ -44,8 +44,15 @@ class MoE(nn.Module):
             print(f"Initialized MoEUILModel with {self.num_experts} experts and a gating mechanism.")
 
     def forward(self, data):
-        # Always give the gate the unaugmented input
-        gate_weights = self.get_gate_weights(data)
+
+        # Get output from shared model (contains all experts)
+        # output = {h_stable, h_orig, node_masks, edge_masks, feat_masks, expert_logits, loss_total_list, loss_ce_list, loss_reg_list, loss_sem_list, loss_str_list, cached_masks}
+        shared_output = self.shared_model(data, data.y)
+
+        gate_input = self._build_gate_input_for_gate(data, shared_output['cached_masks'])
+
+         # Always give the gate the unaugmented input
+        gate_weights = self.get_gate_weights(gate_input)
         
         if self.verbose:
             print("Gate weights before entmax:", gate_weights)
@@ -57,10 +64,6 @@ class MoE(nn.Module):
 
         if self.verbose:
             print("Gating weights:", gate_weights)
-
-        # Get output from shared model (contains all experts)
-        # output = {h_stable, h_orig, node_masks, edge_masks, feat_masks, expert_logits, loss_total_list, loss_ce_list, loss_reg_list, loss_sem_list, loss_str_list, cached_masks}
-        shared_output = self.shared_model(data, data.y)
     
         # Get aggregated output should be a dictionary with keys:
         # output = {logits, loss_total, loss_ce, loss_reg, loss_sem, loss_str, gate_weights}
@@ -157,6 +160,38 @@ class MoE(nn.Module):
             print(f"Aggregated outputs using {self.aggregation_method} method:", aggregated_outputs['logits'])
 
         return aggregated_outputs
+    
+    def _build_gate_input_for_gate(self, data, cached):
+        """
+        Create a PyG Data with extra channels so gate sees experts' subgraph hypotheses.
+        """
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        # cached has: node_masks (N, K, 1), edge_masks (E, K, 1), feat_masks (N, K, D)
+        node_masks = cached['node_masks'].detach()       # (N, K, 1)
+        edge_masks = cached['edge_masks'].detach()       # (E, K, 1)
+        feat_masks = cached['feat_masks'].detach()       # (N, K, D)
+
+        N, K, _ = node_masks.shape
+        E = edge_masks.shape[0]
+        D = x.size(1)
+
+        node_mask_channels = node_masks.squeeze(-1)          # (N, K)
+        feat_mask_means = feat_masks.mean(dim=2)             # (N, K)
+
+        x_aug = torch.cat([x, node_mask_channels, feat_mask_means], dim=1)  # (N, D + 2K)
+
+        # edge_attr: prepend a ones column to represent the original unmasked edge signal
+        ones = torch.ones(E, 1, device=x.device)
+        edge_attr_aug = torch.cat([ones, edge_masks.squeeze(-1)], dim=1)    # (E, 1 + K)
+
+        gate_input = Data(
+            x=x_aug,
+            edge_index=edge_index,
+            edge_attr=edge_attr_aug,
+            y=data.y,                 # keeps batch semantics identical
+            batch=batch
+        )
+        return gate_input
 
     def get_gate_weights(self, data):
         batch_size = data.y.size(0)  # number of graphs in the batch
