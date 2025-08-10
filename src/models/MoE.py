@@ -121,7 +121,7 @@ class MoE(nn.Module):
                 aggregated_str_loss += weight * str_loss_list[i]
 
             # Compute diversity and load balance losses
-            diversity_loss = self.compute_diversity_loss(shared_output)
+            diversity_loss = shared_output['loss_div']
             load_balance_loss = self.compute_load_balance_loss(gate_weights)
 
             # Combine all losses

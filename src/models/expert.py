@@ -188,12 +188,15 @@ class Experts(nn.Module):
                               self.weight_sem * sem_loss)
                 total_loss_list.append(total_loss)
             
+            diversity_loss = self.compute_diversity_loss(node_masks, edge_masks, feat_masks, node_batch=batch, edge_batch=batch[edge_index[0]])
+
             output.update({
                 'loss_total_list': torch.stack(total_loss_list),
                 'loss_ce_list': torch.stack(ce_loss_list),
                 'loss_reg_list': torch.stack(reg_loss_list),
                 'loss_sem_list': torch.stack(sem_loss_list),
-                'loss_str_list': torch.stack(str_loss_list)
+                'loss_str_list': torch.stack(str_loss_list),
+                'loss_div': diversity_loss
             })
 
         return output
@@ -247,6 +250,59 @@ class Experts(nn.Module):
             return F.cross_entropy(pred, target, weight=weight.to(pred.device))
         else:
             return F.cross_entropy(pred, target)
+        
+    def compute_diversity_loss(
+            self,
+            node_masks: torch.Tensor,   # (N, K, 1)
+            edge_masks: torch.Tensor,   # (E, K, 1)
+            feat_masks: torch.Tensor,   # (N, K, D)
+            node_batch: torch.Tensor,   # (N,)
+            edge_batch: torch.Tensor,   # (E,)
+            tau: float = 0.10,
+            eps: float = 1e-8,
+        ) -> torch.Tensor:
+            """
+            Per-graph diversity across experts' *masks* (nodes/edges/features).
+            Lower similarity -> lower loss. Uses abs-correlation with a hinge margin tau.
+            """
+
+            def _per_graph_abs_corr_hinge(V: torch.Tensor, bidx: torch.Tensor) -> torch.Tensor:
+                # V: (items_in_batch, K), bidx: (items_in_batch,)
+                B = int(bidx.max().item()) + 1
+                vals = []
+                for g in range(B):
+                    sel = (bidx == g)
+                    if sel.sum() < 2:
+                        continue
+                    X = V[sel]  # (n_g, K)
+                    # standardize each expert column within this graph (remove size effects)
+                    X = (X - X.mean(dim=0, keepdim=True)) / (X.std(dim=0, unbiased=False, keepdim=True) + eps)
+                    # correlation ~ cosine after standardization
+                    C = (X.t() @ X) / X.size(0)   # (K, K) in [-1, 1]
+                    K_ = C.size(0)
+                    M = C.abs()
+                    off_mean = (M.sum() - M.diag().sum()) / (K_ * (K_ - 1))
+                    vals.append(F.relu(off_mean - tau))  # only penalize if too similar
+                if not vals:
+                    return V.new_tensor(0.0)
+                return torch.stack(vals).mean()
+
+            # Collapse masks to (items, K)
+            parts = []
+            if node_masks is not None:
+                parts.append(_per_graph_abs_corr_hinge(node_masks.squeeze(-1), node_batch))
+            if edge_masks is not None:
+                parts.append(_per_graph_abs_corr_hinge(edge_masks.squeeze(-1), edge_batch))
+            if feat_masks is not None:
+                # average over feature dims → (N, K)
+                parts.append(_per_graph_abs_corr_hinge(feat_masks.mean(dim=2), node_batch))
+
+            if not parts:
+                # no masks provided; return zero on the correct device
+                dev = node_batch.device if node_masks is None else node_masks.device
+                return torch.tensor(0.0, device=dev)
+
+            return torch.stack(parts).mean()
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask, expert_idx: int, node_batch, edge_batch, use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5),):
         """
