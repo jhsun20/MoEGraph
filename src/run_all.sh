@@ -5,6 +5,7 @@ CONFIGS=(
   "config/config_div_sparse_motif.yaml"
   "config/config_div_sparse_cmnist.yaml"
   "config/config_div_sparse_twitter.yaml"
+  "config/config_div_sparse_hiv.yaml"
 )
 
 # Run each config sequentially
