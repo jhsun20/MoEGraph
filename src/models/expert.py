@@ -161,7 +161,7 @@ class Experts(nn.Module):
                 expert_node_mask = node_masks[:, expert_idx, :]
                 expert_edge_mask = edge_masks[:, expert_idx, :]
                 expert_feat_mask = feat_masks[:, expert_idx, :]
-                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx, use_fixed_rho=True)
+                reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx, node_batch=batch, edge_batch=batch[edge_index[0]], use_fixed_rho=True)
                 reg_loss_list.append(reg_loss)
 
                 sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, h_orig, target)
@@ -253,40 +253,52 @@ class Experts(nn.Module):
         else:
             return F.cross_entropy(pred, target)
 
-    def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask, expert_idx: int, use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5),):
+    def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask, expert_idx: int, node_batch, edge_batch, use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5),):
         """
-        Size regularization for masks.
+        Per-graph mask size regularization.
 
         Args:
-            use_fixed_rho: if True, ignore learnable rhos and use the same 3 values
-                        (node, edge, feat) for all experts.
-            fixed_rho_vals: (rho_node, rho_edge, rho_feat), each in [0,1].
+            node_mask: (N, 1) node mask for this expert
+            edge_mask: (E, 1) edge mask for this expert
+            feat_mask: (N, D) feature mask for this expert
+            node_batch: (N,) graph IDs for nodes
+            edge_batch: (E,) graph IDs for edges
         """
-
         if use_fixed_rho:
-            rho_node, rho_edge, rho_feat = fixed_rho_vals
-            # clamp to valid range
-            rho_node = float(min(max(rho_node, 0.0), 1.0))
-            rho_edge = float(min(max(rho_edge, 0.0), 1.0))
-            rho_feat = float(min(max(rho_feat, 0.0), 1.0))
+            rho_node, rho_edge, rho_feat = [
+                float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals
+            ]
         else:
-            # original learnable behavior (per expert), kept as-is
             rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.8)
             rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.8)
             rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.2, 0.8)
 
-        # Mean deviation from target rho
-        node_dev = (node_mask.mean() - rho_node) ** 2
-        edge_dev = (edge_mask.mean() - rho_edge) ** 2
-        feat_dev = (feat_mask.mean() - rho_feat) ** 2
+        # ---- Per-graph mean keep-rates ----
+        def per_graph_keep(mask_vals, batch_idx):
+            keep_per_graph = torch.zeros(batch_idx.max().item() + 1,
+                                        device=mask_vals.device)
+            count_per_graph = torch.zeros_like(keep_per_graph)
+            keep_per_graph.scatter_add_(0, batch_idx, mask_vals.squeeze())
+            count_per_graph.scatter_add_(0, batch_idx,
+                                        torch.ones_like(mask_vals.squeeze()))
+            return keep_per_graph / (count_per_graph + 1e-8)
 
-        # L0 surrogate via mean
-        node_l0 = node_mask.mean()
-        edge_l0 = edge_mask.mean()
-        feat_l0 = feat_mask.mean()
-        l0_dev = (node_l0 - rho_node) ** 2 + (edge_l0 - rho_edge) ** 2 + (feat_l0 - rho_feat) ** 2
+        node_keep_pg = per_graph_keep(node_mask, node_batch)
+        edge_keep_pg = per_graph_keep(edge_mask, edge_batch)
+        feat_keep_pg = per_graph_keep(feat_mask.mean(dim=1, keepdim=True),
+                                    node_batch)
 
-        return node_dev + edge_dev + feat_dev + l0_dev
+        # ---- Per-graph squared deviations ----
+        node_dev = ((node_keep_pg - rho_node) ** 2).mean()
+        edge_dev = ((edge_keep_pg - rho_edge) ** 2).mean()
+        feat_dev = ((feat_keep_pg - rho_feat) ** 2).mean()
+
+        # ---- L0 surrogate: same as keep-rate for sigmoid masks ----
+        node_l0_dev = ((node_keep_pg - rho_node) ** 2).mean()
+        edge_l0_dev = ((edge_keep_pg - rho_edge) ** 2).mean()
+        feat_l0_dev = ((feat_keep_pg - rho_feat) ** 2).mean()
+
+        return node_dev + edge_dev + feat_dev + node_l0_dev + edge_l0_dev + feat_l0_dev
 
     def compute_semantic_invariance_loss(self, h_stable, h_orig, target):
         """
