@@ -16,5 +16,8 @@ for CONFIG_PATH in "${CONFIGS[@]}"; do
 
     python src/main.py --config "$CONFIG_PATH"
 
+    # Clear datasets after each run
+    rm -rf /workspace/MoEGraph/datasets/*
+
     echo ""
 done
