@@ -178,13 +178,8 @@ class Experts(nn.Module):
                 )
 
                 # === structural loss here (choose 'randomwalk' or 'graphon') ===
-                str_loss = self.compute_structural_invariance_loss(
-                    original_data,
-                    masked_data,
-                    mode="randomwalk",     # or "graphon"
-                    rw_max_steps=4,        # tweak if needed
-                    graphon_bins=4
-                )
+                str_loss = self.compute_structural_invariance_loss(data_masked=masked_data, labels=data.y, mode='randomwalk')
+
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
@@ -318,63 +313,47 @@ class Experts(nn.Module):
 
         return loss / max(1, len(unique_labels))
 
-    def compute_structural_invariance_loss(
-        self,
-        data_orig: Data,
-        data_masked: Data,
-        mode: str = "randomwalk",
-        rw_max_steps: int = 8,
-        graphon_bins: int = 8,
-    ):
+    def compute_structural_invariance_loss(self, data_masked: Data, labels: torch.Tensor, mode: str = "randomwalk", rw_max_steps: int = 8, graphon_bins: int = 8):
         """
-        Structural invariance between original and masked graphs.
-        Returns MSE between per-graph structural vectors (B, d).
-        Supports modes: 'randomwalk' or 'graphon'.
-        Expects:
-        - data.edge_index (batched)
-        - data.batch (node->graph mapping)
-        - Optional: data.edge_attr as edge weights
-        - Optional: data.node_weight as node mask (soft)
+        Structural invariance between causal subgraphs (masked graphs) of the same class.
+        
+        Args:
+            data_masked: PyG Data (batched masked graphs, already has node_weight applied)
+            labels: (B,) tensor of graph-level labels
+            mode: 'randomwalk' or 'graphon'
         """
+        # Step 1: Get structural vectors for masked graphs
         if mode == "randomwalk":
-            s_orig = self._rw_struct_vec_batched(data_orig, rw_max_steps)   # (B, T_agg)
-            s_mask = self._rw_struct_vec_batched(data_masked, rw_max_steps) # (B, T_agg)
+            s_mask = self._rw_struct_vec_batched(data_masked, rw_max_steps)  # (B, d)
         elif mode == "graphon":
-            s_orig = self._graphon_vec_batched(data_orig, graphon_bins)     # (B, bins*bins)
-            s_mask = self._graphon_vec_batched(data_masked, graphon_bins)   # (B, bins*bins)
+            s_mask = self._graphon_vec_batched(data_masked, graphon_bins)    # (B, d)
         else:
             raise ValueError("Unsupported mode: choose 'randomwalk' or 'graphon'.")
 
-        return F.mse_loss(s_orig, s_mask)  # averages over batch & dims
+        # Step 2: Weighted intra-class variance
+        unique_labels = labels.unique()
+        total_weight = 0.0
+        loss = 0.0
 
-    def _rw_struct_vec_batched(self, data: Data, rw_max_steps: int):
-        """
-        Returns (B, T) vector of average return probabilities across nodes,
-        for T walk lengths (1..rw_max_steps). Uses edge weights and node weights if present.
-        """
-        A_list = self._dense_adj_per_graph(data)
-        out = []
-        for A in A_list:
-            n = A.size(0)
-            if n == 0:
-                out.append(torch.zeros(rw_max_steps, device=A.device))
-                continue
-            deg = A.sum(dim=1, keepdim=True)  # (n,1)
-            deg[deg == 0] = 1
-            P = A / deg
+        for lbl in unique_labels:
+            idx = (labels == lbl).nonzero(as_tuple=False).view(-1)
+            if idx.numel() <= 1:
+                continue  # skip classes with <=1 sample in batch
 
-            P_power = torch.eye(n, device=A.device)
-            feats = []
-            for _t in range(rw_max_steps):
-                P_power = P_power @ P  # P^{t+1}
-                # return probability diag(P^t)
-                feats.append(torch.diag(P_power))  # (n,)
+            vecs = s_mask[idx]  # (n_class, d)
+            class_mean = vecs.mean(dim=0, keepdim=True)
+            class_loss = ((vecs - class_mean) ** 2).mean()
 
-            # (n,T) -> mean over nodes -> (T,)
-            feats = torch.stack(feats, dim=1).mean(dim=0)
-            out.append(feats)
+            weight = 1.0 / float(idx.numel())  # inverse frequency weight
+            loss += weight * class_loss
+            total_weight += weight
 
-        return torch.stack(out, dim=0)  # (B, T)
+        if total_weight > 0:
+            loss /= total_weight
+        else:
+            loss = torch.tensor(0.0, device=labels.device)
+
+        return loss
     
     # --- SHARED: build dense adj per graph (respects edge_attr & node_weight) ---
     def _dense_adj_per_graph(self, data: Data):
