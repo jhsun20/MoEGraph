@@ -27,7 +27,7 @@ dataset:
 
 # Model configuration
 model:
-  type: "moe_uil"  # Options: GIN, GCN, GraphSAGE, moe, moe_uil, uil
+  type: "moe"  # Options: GIN, GCN, GraphSAGE, moe, moe_uil, uil
   parallel: false
   hidden_dim: 300
   num_layers: 3
