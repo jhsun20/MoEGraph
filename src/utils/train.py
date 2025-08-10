@@ -170,13 +170,36 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
     
-    # --- Print per-expert rhos from last batch ---
-    rho_node_all, rho_edge_all, rho_feat_all = aggregated_outputs['rho']  # each is shape (num_experts,)
-    print("\nPer-expert rhos from last batch:")
-    for i in range(len(rho_node_all)):
-        print(f"  Expert {i}: node={rho_node_all[i].item():.4f}, "
-            f"edge={rho_edge_all[i].item():.4f}, feat={rho_feat_all[i].item():.4f}")
+    # --- Print per-expert actual mask drop rates (last batch) ---
+    nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
+    em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
+    fm = aggregated_outputs.get('feat_masks', None)    # (N, K, D)
 
+    def _per_expert_drop_stats(tensor, reduce_dims):
+        # keep-rate = mean(mask); drop-rate = 1 - keep
+        keep = tensor.float().mean(dim=reduce_dims)         # (K,)
+        drop = 1.0 - keep
+        # std across the same reduce_dims
+        std = tensor.float().std(dim=reduce_dims, unbiased=False)  # (K,)
+        return drop, std
+
+    if nm is not None and em is not None and fm is not None:
+        # Nodes/edges: (N/E, K, 1) -> reduce over dims (0, 2)
+        node_drop, node_std = _per_expert_drop_stats(nm, reduce_dims=(0, 2))
+        edge_drop, edge_std = _per_expert_drop_stats(em, reduce_dims=(0, 2))
+        # Features: (N, K, D) -> reduce over dims (0, 2)
+        feat_drop, feat_std = _per_expert_drop_stats(fm, reduce_dims=(0, 2))
+
+        print("\nPer-expert mask drop rates (mean ± std) from last batch:")
+        for i in range(node_drop.numel()):
+            print(
+                f"  Expert {i}: "
+                f"node={node_drop[i].item():.3f}±{node_std[i].item():.3f}, "
+                f"edge={edge_drop[i].item():.3f}±{edge_std[i].item():.3f}, "
+                f"feat={feat_drop[i].item():.3f}±{feat_std[i].item():.3f}"
+            )
+    else:
+        print("\n[Warn] Mask tensors not found in aggregated_outputs; skip mask stats.")
     gc.collect()
     torch.cuda.empty_cache()
 

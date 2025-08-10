@@ -59,7 +59,7 @@ class MoE(nn.Module):
             print("Gating weights:", gate_weights)
 
         # Get output from shared model (contains all experts)
-        # output = {h_stable, h_orig, node_masks, edge_masks, expert_logits, loss_total_list, loss_ce_list, loss_reg_list, loss_sem_list, loss_str_list, cached_masks}
+        # output = {h_stable, h_orig, node_masks, edge_masks, feat_masks, expert_logits, loss_total_list, loss_ce_list, loss_reg_list, loss_sem_list, loss_str_list, cached_masks}
         shared_output = self.shared_model(data, data.y)
     
         # Get aggregated output should be a dictionary with keys:
@@ -145,7 +145,10 @@ class MoE(nn.Module):
                 'loss_load': load_balance_loss,
                 'gate_weights': gate_weights,
                 'rho': shared_output['rho'],
-                'expert_logits': expert_logits  # Keep expert logits for analysis
+                'expert_logits': expert_logits,  # Keep expert logits for analysis
+                'node_masks': shared_output['node_masks'],
+                'edge_masks': shared_output['edge_masks'],
+                'feat_masks': shared_output['feat_masks']
             }
 
         else:
