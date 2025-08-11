@@ -14,6 +14,10 @@ class Experts(nn.Module):
         super().__init__()
         num_features = dataset_info['num_features']
         num_classes = dataset_info['num_classes']
+        if num_classes == 1:
+            if config['experiment']['debug']['verbose']:
+                print("[warn] dataset_info['num_classes']=1, forcing to 2 for CE with labels {0,1}")
+            num_classes = 2  # force 2 for binary CE
         hidden_dim = config['model']['hidden_dim']
         num_layers = config['model']['num_layers']
         dropout = config['model']['dropout']
