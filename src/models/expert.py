@@ -223,7 +223,7 @@ class Experts(nn.Module):
         # Straight-through: gradients flow through y_soft
         return y_hard + (y_soft - y_soft.detach())
 
-    def compute_classification_loss(self, pred, target, use_weights=True):
+    def compute_classification_loss(self, pred, target, use_weights=False):
         """
         Computes cross-entropy loss with optional class imbalance correction.
         
