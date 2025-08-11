@@ -156,6 +156,11 @@ class Experts(nn.Module):
             for expert_idx in range(self.num_experts):
                 expert_logit = expert_logits[:, expert_idx, :]
                 expert_h_stable = h_stable_list[:, expert_idx, :]
+                assert target.dtype == torch.long, f"target dtype {target.dtype}"
+                num_classes = expert_logit.size(1)
+                tmin, tmax = int(target.min().item()), int(target.max().item())
+                assert 0 <= tmin and tmax < num_classes, f"labels out of range [0,{num_classes-1}]: min={tmin}, max={tmax}"
+
                 ce_loss = self.compute_classification_loss(expert_logit, target)
                 ce_loss_list.append(ce_loss)
 
