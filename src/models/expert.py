@@ -188,7 +188,7 @@ class Experts(nn.Module):
                 )
 
                 # === structural loss here (choose 'randomwalk' or 'graphon') ===
-                str_loss = self.compute_structural_invariance_loss(masked_data, target, mode="randomwalk", rw_max_steps=4, graphon_bins=4)
+                str_loss = self.compute_structural_invariance_loss(masked_data, target, mode="randomwalk", rw_max_steps=8, graphon_bins=4)
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 

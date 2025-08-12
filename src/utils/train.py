@@ -299,29 +299,29 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     final_targets = torch.cat(all_targets, dim=0)
     metrics = compute_metrics(final_outputs, final_targets, metric_type)
 
-    # Top-1 and Top-2 metrics
-    final_top1 = torch.cat(all_top1_outputs, dim=0)
-    final_top2 = torch.cat(all_top2_outputs, dim=0)
-    metrics_top1 = compute_metrics(final_top1, final_targets, metric_type)
-    metrics_top2 = compute_metrics(final_top2, final_targets, metric_type)
+    # # Top-1 and Top-2 metrics
+    # final_top1 = torch.cat(all_top1_outputs, dim=0)
+    # final_top2 = torch.cat(all_top2_outputs, dim=0)
+    # metrics_top1 = compute_metrics(final_top1, final_targets, metric_type)
+    # metrics_top2 = compute_metrics(final_top2, final_targets, metric_type)
 
-    # Add them to metrics dict and print
-    for k, v in metrics_top1.items():
-        metrics[f"top1_{k}"] = v
-    for k, v in metrics_top2.items():
-        metrics[f"top2_{k}"] = v
+    # # Add them to metrics dict and print
+    # for k, v in metrics_top1.items():
+    #     metrics[f"top1_{k}"] = v
+    # for k, v in metrics_top2.items():
+    #     metrics[f"top2_{k}"] = v
 
-    print("\n--- Top-K Expert Metrics ---")
-    for k, v in metrics_top1.items():
-        if isinstance(v, (float, int)):
-            print(f"Top-1 {k}: {v:.4f}")
-        else:
-            print(f"Top-1 {k}: {v}")
-    for k, v in metrics_top2.items():
-        if isinstance(v, (float, int)):
-            print(f"Top-2 {k}: {v:.4f}")
-        else:
-            print(f"Top-2 {k}: {v}")
+    # print("\n--- Top-K Expert Metrics ---")
+    # for k, v in metrics_top1.items():
+    #     if isinstance(v, (float, int)):
+    #         print(f"Top-1 {k}: {v:.4f}")
+    #     else:
+    #         print(f"Top-1 {k}: {v}")
+    # for k, v in metrics_top2.items():
+    #     if isinstance(v, (float, int)):
+    #         print(f"Top-2 {k}: {v:.4f}")
+    #     else:
+    #         print(f"Top-2 {k}: {v}")
         
     # Always include all losses in metrics
     metrics['loss'] = total_loss / len(loader.dataset)
