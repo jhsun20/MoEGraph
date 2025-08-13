@@ -488,7 +488,8 @@ def train(config, trial=None):
                 val_metrics = evaluate_moe(model, val_loader, device, metric_type, epoch, config)
                 # Validate on in-distribution validation set
                 if not is_tuning:
-                    id_val_metrics = evaluate_moe(model, id_val_loader, device, metric_type, epoch, config)
+                    #id_val_metrics = evaluate_moe(model, id_val_loader, device, metric_type, epoch, config)
+                    id_val_metrics = evaluate_moe(model, test_loader, device, metric_type, epoch, config)
             else:
                 train_metrics = train_epoch(model, train_loader, optimizer, dataset_info, device)
                 # Validate on OOD validation set
