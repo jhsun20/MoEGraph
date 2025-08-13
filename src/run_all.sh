@@ -2,7 +2,6 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-
   "config/config_div_sparse_cmnist.yaml"
   "config/config_div_sparse_twitter.yaml"
   "config/config_div_sparse_sst2.yaml"
