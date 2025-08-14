@@ -97,8 +97,8 @@ class Experts(nn.Module):
         mcfg = config.get('model', {})
         self.num_envs = int(mcfg.get('num_envs', 3))
         # semantic EA/LA
-        self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 0.2))
-        self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 0.2))
+        self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 0.4))
+        self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 0.4))
         # structural EA/LA
         self.mi_mu_e_str = float(mcfg.get('mi_mu_e_str', 0.1))
         self.mi_mu_l_str = float(mcfg.get('mi_mu_l_str', 0.1))
@@ -430,7 +430,7 @@ class Experts(nn.Module):
         var_floor_weight: float = 0.0,
         lambda_e: float = 0.0,            # ignored (no env / kmeans)
         lambda_l: float = 0.0,            # label-adversary weight on residual (Gs ⟂ Y)
-        ib_beta: float = 1e-3             # KL weight ~ compression strength (I(h_C;G))
+        ib_beta: float = 2e-3             # KL weight ~ compression strength (I(h_C;G))
     ) -> torch.Tensor:
         """
         Original: prototype pull.
