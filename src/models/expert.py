@@ -295,7 +295,7 @@ class Experts(nn.Module):
                 #     mu_e=self.mi_mu_e_str,
                 #     mu_l=self.mi_mu_l_str
                 # )
-                str_loss = 0.0
+                str_loss = torch.tensor(0.0)
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
