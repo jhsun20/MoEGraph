@@ -97,8 +97,8 @@ class Experts(nn.Module):
         mcfg = config.get('model', {})
         self.num_envs = int(mcfg.get('num_envs', 3))
         # semantic EA/LA
-        self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 0.5))
-        self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 0.5))
+        self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 0.2))
+        self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 0.2))
         # structural EA/LA
         self.mi_mu_e_str = float(mcfg.get('mi_mu_e_str', 0.1))
         self.mi_mu_l_str = float(mcfg.get('mi_mu_l_str', 0.1))
