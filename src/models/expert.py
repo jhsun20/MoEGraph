@@ -102,6 +102,10 @@ class Experts(nn.Module):
         # structural EA/LA
         self.mi_mu_e_str = float(mcfg.get('mi_mu_e_str', 0.1))
         self.mi_mu_l_str = float(mcfg.get('mi_mu_l_str', 0.1))
+        # VIB
+        self.vib_mu = nn.Linear(hidden_dim, hidden_dim)
+        self.vib_logvar = nn.Linear(hidden_dim, hidden_dim)
+
 
         self.causal_encoder = GINEncoderWithEdgeWeight(num_features, hidden_dim, num_layers, dropout, train_eps=True)
         
@@ -464,15 +468,15 @@ class Experts(nn.Module):
                 h_S = (h_orig.detach() - h_C).detach()
 
             # Pseudo-envs from nuisance residuals (cheap & effective)
-            with torch.no_grad():
-                # Normalize for clustering stability
-                r = F.normalize(h_S, p=2, dim=1)
-                pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
+            # with torch.no_grad():
+            #     # Normalize for clustering stability
+            #     r = F.normalize(h_S, p=2, dim=1)
+            #     pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
 
-            # EA on h_C
-            if lambda_e > 0.0:
-                logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
-                loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
+            # # EA on h_C
+            # if lambda_e > 0.0:
+            #     logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
+            #     loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
 
             # LA on h_S
             if lambda_l > 0.0:
