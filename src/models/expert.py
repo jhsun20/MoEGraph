@@ -233,19 +233,19 @@ class Experts(nn.Module):
 
         if target is not None:
             # Precompute once per batch: original structural vector
-            s_orig = self._rw_struct_vec_batched(
-                Data(edge_index=original_data.edge_index,
-                     batch=original_data.batch,
-                     edge_attr=original_data.edge_attr,
-                     node_weight=original_data.node_weight),
-                rw_max_steps=4
-            )  # (B, T)
+            # s_orig = self._rw_struct_vec_batched(
+            #     Data(edge_index=original_data.edge_index,
+            #          batch=original_data.batch,
+            #          edge_attr=original_data.edge_attr,
+            #          node_weight=original_data.node_weight),
+            #     rw_max_steps=4
+            # )  # (B, T)
 
             # Initialize structural heads lazily now that T is known
-            T = s_orig.size(1)
-            if (self.env_head_str is None) or (self.env_head_str.in_features != T):
-                self.env_head_str = nn.Linear(T, self.num_envs).to(s_orig.device)
-                self.lbl_head_spur_str = nn.Linear(T, self.expert_classifiers[0].out_features).to(s_orig.device)
+            # T = s_orig.size(1)
+            # if (self.env_head_str is None) or (self.env_head_str.in_features != T):
+            #     self.env_head_str = nn.Linear(T, self.num_envs).to(s_orig.device)
+            #     self.lbl_head_spur_str = nn.Linear(T, self.expert_classifiers[0].out_features).to(s_orig.device)
 
             ce_loss_list, reg_loss_list, sem_loss_list, str_loss_list, total_loss_list = [], [], [], [], []
             
@@ -277,24 +277,25 @@ class Experts(nn.Module):
                 sem_loss_list.append(sem_loss)
 
                 # structural masked graph for THIS expert (structure-only)
-                masked_data = Data(
-                    edge_index=edge_index,
-                    batch=batch,
-                    edge_attr=expert_edge_mask.view(-1),   # (E, 1) -> (E,)
-                    node_weight=expert_node_mask.view(-1)  # (N, 1) -> (N,)
-                )
+                # masked_data = Data(
+                #     edge_index=edge_index,
+                #     batch=batch,
+                #     edge_attr=expert_edge_mask.view(-1),   # (E, 1) -> (E,)
+                #     node_weight=expert_node_mask.view(-1)  # (N, 1) -> (N,)
+                # )
 
                 # ---- MI-augmented STRUCTURAL invariance ----
-                str_loss = self.compute_structural_invariance_loss(
-                    data_masked=masked_data,
-                    labels=target,
-                    s_orig=s_orig,
-                    mode="randomwalk",
-                    rw_max_steps=4,
-                    graphon_bins=4,
-                    mu_e=self.mi_mu_e_str,
-                    mu_l=self.mi_mu_l_str
-                )
+                # str_loss = self.compute_structural_invariance_loss(
+                #     data_masked=masked_data,
+                #     labels=target,
+                #     s_orig=s_orig,
+                #     mode="randomwalk",
+                #     rw_max_steps=4,
+                #     graphon_bins=4,
+                #     mu_e=self.mi_mu_e_str,
+                #     mu_l=self.mi_mu_l_str
+                # )
+                str_loss = 0.0
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
@@ -463,15 +464,15 @@ class Experts(nn.Module):
                 h_S = (h_orig.detach() - h_C).detach()
 
             # Pseudo-envs from nuisance residuals (cheap & effective)
-            with torch.no_grad():
-                # Normalize for clustering stability
-                r = F.normalize(h_S, p=2, dim=1)
-                pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
+            # with torch.no_grad():
+            #     # Normalize for clustering stability
+            #     r = F.normalize(h_S, p=2, dim=1)
+            #     pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
 
-            # EA on h_C
-            if lambda_e > 0.0:
-                logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
-                loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
+            # # EA on h_C
+            # if lambda_e > 0.0:
+            #     logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
+            #     loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
 
             # LA on h_S
             if lambda_l > 0.0:
