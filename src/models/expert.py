@@ -238,7 +238,7 @@ class Experts(nn.Module):
                      batch=original_data.batch,
                      edge_attr=original_data.edge_attr,
                      node_weight=original_data.node_weight),
-                rw_max_steps=8
+                rw_max_steps=4
             )  # (B, T)
 
             # Initialize structural heads lazily now that T is known
