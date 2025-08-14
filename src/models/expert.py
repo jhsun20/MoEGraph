@@ -238,13 +238,13 @@ class Experts(nn.Module):
 
         if target is not None:
             # Precompute once per batch: original structural vector
-            # s_orig = self._rw_struct_vec_batched(
-            #     Data(edge_index=original_data.edge_index,
-            #          batch=original_data.batch,
-            #          edge_attr=original_data.edge_attr,
-            #          node_weight=original_data.node_weight),
-            #     rw_max_steps=4
-            # )  # (B, T)
+            s_orig = self._rw_struct_vec_batched(
+                Data(edge_index=original_data.edge_index,
+                     batch=original_data.batch,
+                     edge_attr=original_data.edge_attr,
+                     node_weight=original_data.node_weight),
+                rw_max_steps=4
+            )  # (B, T)
 
             # Initialize structural heads lazily now that T is known
             # T = s_orig.size(1)
@@ -282,25 +282,25 @@ class Experts(nn.Module):
                 sem_loss_list.append(sem_loss)
 
                 # structural masked graph for THIS expert (structure-only)
-                # masked_data = Data(
-                #     edge_index=edge_index,
-                #     batch=batch,
-                #     edge_attr=expert_edge_mask.view(-1),   # (E, 1) -> (E,)
-                #     node_weight=expert_node_mask.view(-1)  # (N, 1) -> (N,)
-                # )
+                masked_data = Data(
+                    edge_index=edge_index,
+                    batch=batch,
+                    edge_attr=expert_edge_mask.view(-1),   # (E, 1) -> (E,)
+                    node_weight=expert_node_mask.view(-1)  # (N, 1) -> (N,)
+                )
 
                 # ---- MI-augmented STRUCTURAL invariance ----
-                # str_loss = self.compute_structural_invariance_loss(
-                #     data_masked=masked_data,
-                #     labels=target,
-                #     s_orig=s_orig,
-                #     mode="randomwalk",
-                #     rw_max_steps=4,
-                #     graphon_bins=4,
-                #     mu_e=self.mi_mu_e_str,
-                #     mu_l=self.mi_mu_l_str
-                # )
-                str_loss = torch.tensor(0.0)
+                str_loss = self.compute_structural_invariance_loss(
+                    data_masked=masked_data,
+                    labels=target,
+                    s_orig=s_orig,
+                    mode="randomwalk",
+                    rw_max_steps=4,
+                    graphon_bins=4,
+                    mu_e=self.mi_mu_e_str,
+                    mu_l=self.mi_mu_l_str
+                )
+                # str_loss = torch.tensor(0.0)
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
