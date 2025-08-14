@@ -10,7 +10,7 @@ from copy import deepcopy
 import gdown
 import numpy as np
 import torch
-from dig.xgraph.dataset import SentiGraphDataset
+# from dig.xgraph.dataset import SentiGraphDataset
 from munch import Munch
 from torch_geometric.data import InMemoryDataset, extract_zip, Data
 from tqdm import tqdm

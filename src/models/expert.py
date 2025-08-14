@@ -7,6 +7,69 @@ from torch_geometric.nn import global_mean_pool
 from torch_geometric.utils import to_dense_adj
 from torch_geometric.data import Data
 import math
+from typing import Optional, Tuple
+
+# -----------------------
+# Gradient Reversal Layer
+# -----------------------
+class _GradReverse(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, lambd: float):
+        ctx.lambd = float(lambd)
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return -ctx.lambd * grad_output, None
+
+def grad_reverse(x, lambd: float):
+    return _GradReverse.apply(x, lambd)
+
+
+# -----------------------
+# Simple Torch K-Means
+# -----------------------
+def kmeans_torch(x: torch.Tensor, K: int, iters: int = 10, eps: float = 1e-6, seed: Optional[int] = None) -> torch.Tensor:
+    """
+    x: (B, d) batch of vectors
+    returns labels: (B,) in {0..K-1}
+    """
+    B, d = x.shape
+    if B < K:
+        # fall back: unique labels up to B
+        return torch.arange(B, device=x.device) % max(1, K)
+
+    if seed is not None:
+        g = torch.Generator(device=x.device)
+        g.manual_seed(seed)
+        sel = torch.randperm(B, generator=g, device=x.device)[:K]
+    else:
+        sel = torch.randperm(B, device=x.device)[:K]
+
+    centers = x[sel].clone()  # (K, d)
+    for _ in range(max(1, iters)):
+        # assign
+        # (B, K) distances
+        dist = (x.unsqueeze(1) - centers.unsqueeze(0)).pow(2).sum(dim=2)
+        labels = dist.argmin(dim=1)  # (B,)
+
+        # update
+        new_centers = []
+        moved = 0.0
+        for k in range(K):
+            mask = (labels == k)
+            if mask.any():
+                c = x[mask].mean(dim=0)
+            else:
+                # reinit a dead cluster
+                c = x[torch.randint(B, (1,), device=x.device)].squeeze(0)
+            moved += (centers[k] - c).pow(2).sum().item()
+            new_centers.append(c)
+        centers = torch.stack(new_centers, dim=0)
+
+        if moved / (K * d + 1e-9) < eps:
+            break
+    return labels
 
 
 class Experts(nn.Module):
@@ -29,7 +92,17 @@ class Experts(nn.Module):
         self.weight_ce = config['model']['weight_ce']
         self.verbose = config['experiment']['debug']['verbose']
         self.num_experts = num_experts
-        
+
+        # -------- MI hyperparams (defaults if absent) --------
+        mcfg = config.get('model', {})
+        self.num_envs = int(mcfg.get('num_envs', 3))
+        # semantic EA/LA
+        self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 0.1))
+        self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 0.1))
+        # structural EA/LA
+        self.mi_mu_e_str = float(mcfg.get('mi_mu_e_str', 0.1))
+        self.mi_mu_l_str = float(mcfg.get('mi_mu_l_str', 0.1))
+
         self.causal_encoder = GINEncoderWithEdgeWeight(num_features, hidden_dim, num_layers, dropout, train_eps=True)
         
         self.expert_node_masks = nn.ModuleList([
@@ -53,13 +126,17 @@ class Experts(nn.Module):
         self.expert_classifiers = nn.ModuleList([
             nn.Linear(hidden_dim, num_classes) for _ in range(num_experts)
         ])
-        
-        # self.rho_node = nn.Parameter(torch.tensor(rho))
-        # self.rho_edge = nn.Parameter(torch.tensor(rho))
-        # self.rho_feat = nn.Parameter(torch.tensor(rho))
-        # self.rho_node = nn.Parameter(torch.full((num_experts,), float(rho)))
-        # self.rho_edge = nn.Parameter(torch.full((num_experts,), float(rho)))
-        # self.rho_feat = nn.Parameter(torch.full((num_experts,), float(rho)))
+
+        # ---- NEW: small adversarial heads (shared across experts) ----
+        # Semantic heads (on h_C and residual h_S)
+        self.env_head_sem = nn.Linear(hidden_dim, self.num_envs)
+        self.lbl_head_spur_sem = nn.Linear(hidden_dim, num_classes)
+        # Structural heads (on s_C and residual s_S). We'll bind output dim at runtime.
+        # We create placeholders and reset in first call if dims differ.
+        self.env_head_str: Optional[nn.Linear] = None
+        self.lbl_head_spur_str: Optional[nn.Linear] = None
+
+        # Keep-rate priors per expert
         self.rho_node = nn.Parameter(torch.empty(num_experts).uniform_(0.2, 0.8))
         self.rho_edge = nn.Parameter(torch.empty(num_experts).uniform_(0.2, 0.8))
         self.rho_feat = nn.Parameter(torch.empty(num_experts).uniform_(0.2, 0.8))
@@ -155,6 +232,21 @@ class Experts(nn.Module):
         }
 
         if target is not None:
+            # Precompute once per batch: original structural vector
+            s_orig = self._rw_struct_vec_batched(
+                Data(edge_index=original_data.edge_index,
+                     batch=original_data.batch,
+                     edge_attr=original_data.edge_attr,
+                     node_weight=original_data.node_weight),
+                rw_max_steps=8
+            )  # (B, T)
+
+            # Initialize structural heads lazily now that T is known
+            T = s_orig.size(1)
+            if (self.env_head_str is None) or (self.env_head_str.in_features != T):
+                self.env_head_str = nn.Linear(T, self.num_envs).to(s_orig.device)
+                self.lbl_head_spur_str = nn.Linear(T, self.expert_classifiers[0].out_features).to(s_orig.device)
+
             ce_loss_list, reg_loss_list, sem_loss_list, str_loss_list, total_loss_list = [], [], [], [], []
             
             for expert_idx in range(self.num_experts):
@@ -174,11 +266,16 @@ class Experts(nn.Module):
                 reg_loss = self.compute_mask_regularization_loss(expert_node_mask, expert_edge_mask, expert_feat_mask, expert_idx, node_batch=batch, edge_batch=batch[edge_index[0]], use_fixed_rho=False)
                 reg_loss_list.append(reg_loss)
 
-                sem_loss = self.compute_semantic_invariance_loss(expert_h_stable, target)
-                #sem_loss = torch.tensor(0.0, device=expert_logit.device)
+                # ---- MI-augmented SEMANTIC invariance ----
+                sem_loss = self.compute_semantic_invariance_loss(
+                    h_masked=expert_h_stable,
+                    labels=target,
+                    h_orig=h_orig,
+                    lambda_e=self.mi_lambda_e_sem,
+                    lambda_l=self.mi_lambda_l_sem
+                )
                 sem_loss_list.append(sem_loss)
 
-                #str_loss = self.compute_structural_invariance_loss(expert_h_stable, target, edge_index, batch, expert_node_mask, expert_edge_mask)
                 # structural masked graph for THIS expert (structure-only)
                 masked_data = Data(
                     edge_index=edge_index,
@@ -187,8 +284,17 @@ class Experts(nn.Module):
                     node_weight=expert_node_mask.view(-1)  # (N, 1) -> (N,)
                 )
 
-                # === structural loss here (choose 'randomwalk' or 'graphon') ===
-                str_loss = self.compute_structural_invariance_loss(masked_data, target, mode="randomwalk", rw_max_steps=8, graphon_bins=4)
+                # ---- MI-augmented STRUCTURAL invariance ----
+                str_loss = self.compute_structural_invariance_loss(
+                    data_masked=masked_data,
+                    labels=target,
+                    s_orig=s_orig,
+                    mode="randomwalk",
+                    rw_max_steps=4,
+                    graphon_bins=4,
+                    mu_e=self.mi_mu_e_str,
+                    mu_l=self.mi_mu_l_str
+                )
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
@@ -213,49 +319,20 @@ class Experts(nn.Module):
     def _hard_concrete_mask(self, logits, temperature=0.1):
         """
         Sample a hard 0/1 mask from logits with straight-through gradient.
-        Args:
-            logits: (N, 1) or (N, D) pre-activation mask values
-            temperature: controls smoothness; lower = harder
-        Returns:
-            mask: hard {0,1} mask (same shape as logits) with gradient
         """
-        # Add Gumbel noise
         uniform_noise = torch.rand_like(logits)
         gumbel_noise = -torch.log(-torch.log(uniform_noise + 1e-20) + 1e-20)
-
-        # Continuous sample in (0,1)
         y_soft = torch.sigmoid((logits + gumbel_noise) / temperature)
-
-        # Hard binary sample
         y_hard = (y_soft > 0.5).float()
-
-        # Straight-through: gradients flow through y_soft
         return y_hard + (y_soft - y_soft.detach())
 
     def compute_classification_loss(self, pred, target, use_weights=False):
-        """
-        Computes cross-entropy loss with optional class imbalance correction.
-        
-        Args:
-            pred (Tensor): Logits of shape (B, C)
-            target (Tensor): Ground truth labels of shape (B,)
-            use_weights (bool): Whether to use class weights for imbalance correction. Default: False
-        
-        Returns:
-            Tensor: Cross-entropy loss
-        """
         if use_weights:
-            # Compute class counts from current batch
             num_classes = pred.size(1)
             class_counts = torch.bincount(target, minlength=num_classes).float()
-            
-            # Avoid division by zero
             class_counts[class_counts == 0] = 1.0
-
-            # Inverse frequency weighting normalized to sum to 1
             weight = 1.0 / class_counts
             weight = weight / weight.sum()
-            
             return F.cross_entropy(pred, target, weight=weight.to(pred.device))
         else:
             return F.cross_entropy(pred, target)
@@ -266,64 +343,45 @@ class Experts(nn.Module):
             edge_masks: torch.Tensor,   # (E, K, 1)
             feat_masks: torch.Tensor,   # (N, K, D)
             node_batch: torch.Tensor,   # (N,)
-            edge_batch: torch.Tensor,   # (E,)
+            edge_batch: torch.Tensor,   # (E,),
             tau: float = 0.10,
             eps: float = 1e-8,
         ) -> torch.Tensor:
             """
-            Per-graph diversity across experts' *masks* (nodes/edges/features).
-            Lower similarity -> lower loss. Uses abs-correlation with a hinge margin tau.
+            Per-graph diversity across experts' masks (nodes/edges/features).
             """
-
             def _per_graph_abs_corr_hinge(V: torch.Tensor, bidx: torch.Tensor) -> torch.Tensor:
-                # V: (items_in_batch, K), bidx: (items_in_batch,)
                 B = int(bidx.max().item()) + 1
                 vals = []
                 for g in range(B):
                     sel = (bidx == g)
                     if sel.sum() < 2:
                         continue
-                    X = V[sel]  # (n_g, K)
-                    # standardize each expert column within this graph (remove size effects)
+                    X = V[sel]
                     X = (X - X.mean(dim=0, keepdim=True)) / (X.std(dim=0, unbiased=False, keepdim=True) + eps)
-                    # correlation ~ cosine after standardization
-                    C = (X.t() @ X) / X.size(0)   # (K, K) in [-1, 1]
+                    C = (X.t() @ X) / X.size(0)
                     K_ = C.size(0)
                     M = C.abs()
                     off_mean = (M.sum() - M.diag().sum()) / (K_ * (K_ - 1))
-                    vals.append(F.relu(off_mean - tau))  # only penalize if too similar
+                    vals.append(F.relu(off_mean - tau))
                 if not vals:
                     return V.new_tensor(0.0)
                 return torch.stack(vals).mean()
 
-            # Collapse masks to (items, K)
             parts = []
             if node_masks is not None:
                 parts.append(_per_graph_abs_corr_hinge(node_masks.squeeze(-1), node_batch))
             if edge_masks is not None:
                 parts.append(_per_graph_abs_corr_hinge(edge_masks.squeeze(-1), edge_batch))
             if feat_masks is not None:
-                # average over feature dims → (N, K)
                 parts.append(_per_graph_abs_corr_hinge(feat_masks.mean(dim=2), node_batch))
 
             if not parts:
-                # no masks provided; return zero on the correct device
                 dev = node_batch.device if node_masks is None else node_masks.device
                 return torch.tensor(0.0, device=dev)
-
             return torch.stack(parts).mean()
 
     def compute_mask_regularization_loss(self, node_mask, edge_mask, feat_mask, expert_idx: int, node_batch, edge_batch, use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5),):
-        """
-        Per-graph mask size regularization.
-
-        Args:
-            node_mask: (N, 1) node mask for this expert
-            edge_mask: (E, 1) edge mask for this expert
-            feat_mask: (N, D) feature mask for this expert
-            node_batch: (N,) graph IDs for nodes
-            edge_batch: (E,) graph IDs for edges
-        """
         if use_fixed_rho:
             rho_node, rho_edge, rho_feat = [
                 float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals
@@ -333,7 +391,6 @@ class Experts(nn.Module):
             rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.4, 0.6)
             rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.4, 0.6)
 
-        # ---- Per-graph mean keep-rates ----
         def per_graph_keep(mask_vals, batch_idx):
             keep_per_graph = torch.zeros(batch_idx.max().item() + 1,
                                         device=mask_vals.device)
@@ -348,80 +405,96 @@ class Experts(nn.Module):
         feat_keep_pg = per_graph_keep(feat_mask.mean(dim=1, keepdim=True),
                                     node_batch)
 
-        # ---- Per-graph squared deviations ----
         node_dev = ((node_keep_pg - rho_node) ** 2).mean()
         edge_dev = ((edge_keep_pg - rho_edge) ** 2).mean()
         feat_dev = ((feat_keep_pg - rho_feat) ** 2).mean()
 
         return node_dev + edge_dev + feat_dev
 
-    def compute_semantic_invariance_loss(self, h_masked: torch.Tensor,
-                                        labels: torch.Tensor,
-                                        beta: float = 0.99,
-                                        normalize: bool = True,
-                                        var_floor: float = 0.0,
-                                        var_floor_weight: float = 0.0) -> torch.Tensor:
+    # --------- MI-augmented Semantic Invariance ----------
+    def compute_semantic_invariance_loss(
+        self,
+        h_masked: torch.Tensor,
+        labels: torch.Tensor,
+        h_orig: Optional[torch.Tensor] = None,
+        beta: float = 0.99,
+        normalize: bool = True,
+        var_floor: float = 0.0,
+        var_floor_weight: float = 0.0,
+        lambda_e: float = 0.0,
+        lambda_l: float = 0.0
+    ) -> torch.Tensor:
         """
-        Semantic invariance on masked embeddings (GNN2 outputs).
-        Pulls same-class embeddings together using cosine to batch prototypes.
-
-        Args:
-            h_masked: (B, d) masked graph embeddings from GNN2
-            labels:  (B,) int64 class labels
-            beta:    effective-number weighting param (0.9–0.999); set None to disable
-            normalize: L2-normalize embeddings before computing prototypes/similarity
-            var_floor: minimum desired stdev per embedding dim across the batch (0 disables)
-            var_floor_weight: weight for variance-floor penalty
-
-        Returns:
-            loss_sem: scalar tensor
+        Original: prototype pull.
+        Added: EA on h_C (env ⟂ h_C) and LA on residual h_S (Y ⟂ h_S) via GRL and pseudo-envs.
         """
+        # ---- original prototype compactness ----
         h = F.normalize(h_masked, p=2, dim=1) if normalize else h_masked
 
         unique = labels.unique()
         loss = h.new_tensor(0.0)
         total_w = h.new_tensor(0.0)
 
-        for c in unique:
-            idx = (labels == c).nonzero(as_tuple=False).view(-1)
-            n_c = int(idx.numel())
-            if n_c < 2:
-                continue
+        # for c in unique:
+        #     idx = (labels == c).nonzero(as_tuple=False).view(-1)
+        #     n_c = int(idx.numel())
+        #     if n_c < 2:
+        #         continue
+        #     h_c = h[idx]
+        #     mu_c = F.normalize(h_c.mean(0, keepdim=True), p=2, dim=1) if normalize else h_c.mean(0, keepdim=True)
+        #     sim = F.cosine_similarity(h_c, mu_c.expand_as(h_c), dim=1)
+        #     class_loss = 1.0 - sim.mean()
+        #     w_c = (1.0 - beta) / (1.0 - (beta ** n_c)) if beta is not None else 1.0
+        #     loss = loss + w_c * class_loss
+        #     total_w = total_w + w_c
 
-            h_c = h[idx]                              # (n_c, d)
-            mu_c = F.normalize(h_c.mean(0, keepdim=True), p=2, dim=1) if normalize else h_c.mean(0, keepdim=True)
-            # cosine compactness to class prototype
-            sim = F.cosine_similarity(h_c, mu_c.expand_as(h_c), dim=1)   # (n_c,)
-            class_loss = 1.0 - sim.mean()
+        # loss = loss / torch.clamp(total_w, min=1.0)
 
-            if beta is not None:
-                w_c = (1.0 - beta) / (1.0 - (beta ** n_c))
-            else:
-                w_c = 1.0
+        # if var_floor_weight > 0.0 and h.size(0) > 1:
+        #     std_per_dim = h.std(dim=0, unbiased=False)
+        #     vf_penalty = F.relu(var_floor - std_per_dim).mean()
+        #     loss = loss + var_floor_weight * vf_penalty
 
-            loss = loss + w_c * class_loss
-            total_w = total_w + w_c
+        # ---- MI bits (opt-in) ----
+        if (lambda_e > 0.0) or (lambda_l > 0.0):
+            assert h_orig is not None, "h_orig required for MI-augmented semantic invariance"
+            h_C = h_masked
+            with torch.no_grad():
+                h_S = (h_orig.detach() - h_C).detach()
 
-        loss = loss / torch.clamp(total_w, min=1.0)
+            # Pseudo-envs from nuisance residuals (cheap & effective)
+            with torch.no_grad():
+                # Normalize for clustering stability
+                r = F.normalize(h_S, p=2, dim=1)
+                pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
 
-        # Optional: variance floor to prevent collapse (VICReg-lite style)
-        if var_floor_weight > 0.0 and h.size(0) > 1:
-            std_per_dim = h.std(dim=0, unbiased=False)
-            vf_penalty = F.relu(var_floor - std_per_dim).mean()
-            loss = loss + var_floor_weight * vf_penalty
+            # EA on h_C
+            if lambda_e > 0.0:
+                logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
+                loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
+
+            # LA on h_S
+            if lambda_l > 0.0:
+                logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_S, lambda_l))
+                loss = loss + lambda_l * F.cross_entropy(logits_y_spur, labels)
 
         return loss
 
-
-    def compute_structural_invariance_loss(self, data_masked: Data, labels: torch.Tensor, mode: str = "randomwalk", rw_max_steps: int = 8, graphon_bins: int = 8):
+    # --------- MI-augmented Structural Invariance ----------
+    def compute_structural_invariance_loss(
+        self,
+        data_masked: Data,
+        labels: torch.Tensor,
+        s_orig: Optional[torch.Tensor] = None,
+        mode: str = "randomwalk",
+        rw_max_steps: int = 8,
+        graphon_bins: int = 8,
+        mu_e: float = 0.0,
+        mu_l: float = 0.0
+    ):
         """
-        Structural invariance between causal subgraphs (masked graphs) of the same class,
-        weighted by inverse class frequency to handle imbalance.
-
-        Args:
-            data_masked: PyG Data (batched masked graphs, already has node_weight applied)
-            labels: (B,) tensor of graph-level labels
-            mode: 'randomwalk' or 'graphon'
+        Original: intra-class variance on structural vectors of masked graphs.
+        Added: EA on s_C and LA on residual s_S with pseudo-envs from s_S (no labels).
         """
         # Step 1: Get structural vectors for masked graphs
         if mode == "randomwalk":
@@ -431,29 +504,52 @@ class Experts(nn.Module):
         else:
             raise ValueError("Unsupported mode: choose 'randomwalk' or 'graphon'.")
 
-        # Step 2: Weighted intra-class variance
+        # Step 2: Weighted intra-class variance (original)
         unique_labels = labels.unique()
         total_weight = 0.0
-        loss = 0.0
+        loss = s_mask.new_tensor(0.0)
 
-        for lbl in unique_labels:
-            idx = (labels == lbl).nonzero(as_tuple=False).view(-1)
-            if idx.numel() <= 1:
-                continue  # skip classes with <=1 sample in batch
+        # for lbl in unique_labels:
+        #     idx = (labels == lbl).nonzero(as_tuple=False).view(-1)
+        #     if idx.numel() <= 1:
+        #         continue
+        #     vecs = s_mask[idx]
+        #     class_mean = vecs.mean(dim=0, keepdim=True)
+        #     class_loss = ((vecs - class_mean) ** 2).mean()
+        #     weight = 1.0
+        #     loss = loss + weight * class_loss
+        #     total_weight += weight
 
-            vecs = s_mask[idx]  # (n_class, d)
-            class_mean = vecs.mean(dim=0, keepdim=True)
-            class_loss = ((vecs - class_mean) ** 2).mean()
+        # if total_weight > 0:
+        #     loss = loss / total_weight
 
-            #weight = 1.0 / float(idx.numel())  # inverse frequency weight
-            weight = 1.0
-            loss += weight * class_loss
-            total_weight += weight
+        # Step 3: MI bits (opt-in)
+        if (mu_e > 0.0) or (mu_l > 0.0):
+            assert s_orig is not None, "s_orig required for MI-augmented structural invariance"
 
-        if total_weight > 0:
-            loss /= total_weight
-        else:
-            loss = torch.tensor(0.0, device=labels.device)
+            s_C = s_mask
+            with torch.no_grad():
+                s_S = (s_orig.detach() - s_C).detach()
+
+            # pseudo-envs from structure residuals
+            with torch.no_grad():
+                r = F.normalize(s_S, p=2, dim=1)
+                pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)
+
+            # lazy-build heads (match dim)
+            if (self.env_head_str is None) or (self.env_head_str.in_features != s_C.size(1)):
+                self.env_head_str = nn.Linear(s_C.size(1), self.num_envs).to(s_C.device)
+                self.lbl_head_spur_str = nn.Linear(s_C.size(1), self.expert_classifiers[0].out_features).to(s_C.device)
+
+            # EA on s_C
+            if mu_e > 0.0:
+                logits_e = self.env_head_str(grad_reverse(s_C, mu_e))
+                loss = loss + mu_e * F.cross_entropy(logits_e, pseudo_env)
+
+            # LA on s_S
+            if mu_l > 0.0:
+                logits_y_spur = self.lbl_head_spur_str(grad_reverse(s_S, mu_l))
+                loss = loss + mu_l * F.cross_entropy(logits_y_spur, labels)
 
         return loss
 
@@ -478,22 +574,18 @@ class Experts(nn.Module):
             feats = []
             for _t in range(rw_max_steps):
                 P_power = P_power @ P  # P^{t+1}
-                # return probability diag(P^t)
                 feats.append(torch.diag(P_power))  # (n,)
 
-            # (n,T) -> mean over nodes -> (T,)
             feats = torch.stack(feats, dim=1).mean(dim=0)
             out.append(feats)
 
         return torch.stack(out, dim=0)  # (B, T)
     
-    # --- SHARED: build dense adj per graph (respects edge_attr & node_weight) ---
     def _dense_adj_per_graph(self, data: Data):
         """
         Returns a list of dense adjacency matrices [A_0, ..., A_{B-1}] (each (n_i, n_i)),
         where A_i applies edge weights (edge_attr) and soft node masking (node_weight) if provided.
         """
-        # Build weighted adjacency for the whole batch; shape (B, N_max, N_max)
         if hasattr(data, "edge_attr") and data.edge_attr is not None:
             adj = to_dense_adj(data.edge_index, batch=data.batch, edge_attr=data.edge_attr).squeeze(0)
         else:
@@ -502,15 +594,12 @@ class Experts(nn.Module):
         B = int(data.batch.max().item()) + 1 if data.batch is not None else 1
         A_list = []
         for b in range(B):
-            # mask per-graph valid nodes
             node_idx = (data.batch == b).nonzero(as_tuple=False).view(-1)
             n = node_idx.numel()
-            A = adj[b, :n, :n]  # crop to actual size
+            A = adj[b, :n, :n]
 
-            # apply soft node mask if provided
             if hasattr(data, "node_weight") and data.node_weight is not None:
                 w = data.node_weight[node_idx].view(n, 1)  # (n,1)
-                # soft delete: A' = diag(w) * A * diag(w)
                 A = (A * w) * w.T
 
             A_list.append(A)
@@ -529,7 +618,7 @@ class Experts(nn.Module):
                 vecs.append(torch.zeros(graphon_bins * graphon_bins, device=A.device))
                 continue
 
-            degrees = A.sum(dim=1)  # weighted degree after node masking
+            degrees = A.sum(dim=1)
             idx = torch.argsort(degrees, descending=True)
             A_sorted = A[idx][:, idx]
 
