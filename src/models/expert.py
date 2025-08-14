@@ -97,8 +97,8 @@ class Experts(nn.Module):
         mcfg = config.get('model', {})
         self.num_envs = int(mcfg.get('num_envs', 3))
         # semantic EA/LA
-        self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 1.0))
-        self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 1.0))
+        self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 0.5))
+        self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 0.5))
         # structural EA/LA
         self.mi_mu_e_str = float(mcfg.get('mi_mu_e_str', 0.1))
         self.mi_mu_l_str = float(mcfg.get('mi_mu_l_str', 0.1))
@@ -195,6 +195,7 @@ class Experts(nn.Module):
             edge_weight = edge_mask.view(-1)
             masked_Z = self.classifier_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
             h_stable = global_mean_pool(masked_Z, batch)
+
             h_stable_list.append(h_stable)
 
             expert_logit = self.expert_classifiers[expert_idx](h_stable)
@@ -419,15 +420,17 @@ class Experts(nn.Module):
     # --------- MI-augmented Semantic Invariance ----------
     def compute_semantic_invariance_loss(
         self,
-        h_masked: torch.Tensor,
-        labels: torch.Tensor,
-        h_orig: Optional[torch.Tensor] = None,
+        h_masked: torch.Tensor,           # h_C (B, H)
+        labels: torch.Tensor,             # (B,)
+        h_orig: Optional[torch.Tensor] = None,   # (B, H) pooled from unmasked encoder
+        # Unused legacy args kept for backward-compat
         beta: float = 0.99,
-        normalize: bool = True,
+        normalize: bool = False,
         var_floor: float = 0.0,
         var_floor_weight: float = 0.0,
-        lambda_e: float = 0.0,
-        lambda_l: float = 0.0
+        lambda_e: float = 0.0,            # ignored (no env / kmeans)
+        lambda_l: float = 0.0,            # label-adversary weight on residual (Gs ⟂ Y)
+        ib_beta: float = 1e-3             # KL weight ~ compression strength (I(h_C;G))
     ) -> torch.Tensor:
         """
         Original: prototype pull.
@@ -435,10 +438,32 @@ class Experts(nn.Module):
         """
         # ---- original prototype compactness ----
         h = F.normalize(h_masked, p=2, dim=1) if normalize else h_masked
+        device = h_masked.device
+        B, H = h_masked.size()
 
         unique = labels.unique()
         loss = h.new_tensor(0.0)
         total_w = h.new_tensor(0.0)
+
+        # ----- Variational IB on h_C: q(z|h_C) = N(mu(h_C), diag(sigma^2(h_C))) -----
+        # Lazy-create VIB heads the first time
+        if not hasattr(self, "ib_mu_head_sem"):
+            self.ib_mu_head_sem = nn.Linear(H, H).to(device)
+            self.ib_logvar_head_sem = nn.Linear(H, H).to(device)
+            # conservative init for stability
+            nn.init.constant_(self.ib_logvar_head_sem.weight, 0.0)
+            nn.init.constant_(self.ib_logvar_head_sem.bias, -5.0)  # exp(-5) ≈ 0.0067
+
+        mu = self.ib_mu_head_sem(h_masked)            # (B, H)
+        logvar = self.ib_logvar_head_sem(h_masked)    # (B, H)
+
+        # KL[q(z|h_C)||N(0,I)]  (mean over batch; sum over dims per sample)
+        kl_per = 0.5 * (mu.pow(2) + logvar.exp() - 1.0 - logvar).sum(dim=1)  # (B,)
+        kl = kl_per.mean()
+
+        loss = loss + ib_beta * kl
+        #print(f"IB loss:", loss)
+
 
         # for c in unique:
         #     idx = (labels == c).nonzero(as_tuple=False).view(-1)
@@ -468,15 +493,15 @@ class Experts(nn.Module):
                 h_S = (h_orig.detach() - h_C).detach()
 
             # Pseudo-envs from nuisance residuals (cheap & effective)
-            # with torch.no_grad():
-            #     # Normalize for clustering stability
-            #     r = F.normalize(h_S, p=2, dim=1)
-            #     pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
+            with torch.no_grad():
+                # Normalize for clustering stability
+                r = F.normalize(h_S, p=2, dim=1)
+                pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
 
-            # # EA on h_C
-            # if lambda_e > 0.0:
-            #     logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
-            #     loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
+            # EA on h_C
+            if lambda_e > 0.0:
+                logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
+                loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
 
             # LA on h_S
             if lambda_l > 0.0:
