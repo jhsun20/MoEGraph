@@ -40,6 +40,7 @@ class MoE(nn.Module):
         gate_hidden_dim = config['gate']['hidden_dim']
         gate_depth = config['gate']['depth']
         gate_in_dim = num_features + (2 * self.num_experts)
+        # gate_in_dim = num_features
         self.gate = GINEncoderWithEdgeWeight(gate_in_dim, gate_hidden_dim, gate_depth, dropout, train_eps=True)
         self.gate_mlp = nn.Sequential(
             nn.Linear(gate_hidden_dim, gate_hidden_dim),
@@ -59,8 +60,9 @@ class MoE(nn.Module):
 
         gate_input = self._build_gate_input_for_gate(data, shared_output['cached_masks'])
 
-         # Always give the gate the unaugmented input
+        # Always give the gate the unaugmented input
         gate_weights = self.get_gate_weights(gate_input)
+        # gate_weights = self.get_gate_weights(data)
         
         if self.verbose:
             print("Gate weights before entmax:", gate_weights)
