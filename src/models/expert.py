@@ -290,17 +290,17 @@ class Experts(nn.Module):
                 )
 
                 # ---- MI-augmented STRUCTURAL invariance ----
-                str_loss = self.compute_structural_invariance_loss(
-                    data_masked=masked_data,
-                    labels=target,
-                    s_orig=s_orig,
-                    mode="randomwalk",
-                    rw_max_steps=4,
-                    graphon_bins=4,
-                    mu_e=self.mi_mu_e_str,
-                    mu_l=self.mi_mu_l_str
-                )
-                # str_loss = torch.tensor(0.0)
+                # str_loss = self.compute_structural_invariance_loss(
+                #     data_masked=masked_data,
+                #     labels=target,
+                #     s_orig=s_orig,
+                #     mode="randomwalk",
+                #     rw_max_steps=4,
+                #     graphon_bins=4,
+                #     mu_e=self.mi_mu_e_str,
+                #     mu_l=self.mi_mu_l_str
+                # )
+                str_loss = torch.tensor(0.0)
                 str_loss_list.append(str_loss)
 
                 total_loss = (self.weight_ce * ce_loss + 
