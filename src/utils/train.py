@@ -207,7 +207,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     total_sem_loss = total_str_loss = total_div_loss = total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    all_top1_outputs, all_top2_outputs = [], []
+    all_mv_counts = []  # majority-vote "logits" = per-class vote counts (with tiny tie-breaker)
 
     gate_weight_accumulator = []
 
@@ -231,20 +231,16 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         gate_weight_accumulator.append(gate_weights.cpu())
 
         expert_logits = aggregated_outputs['expert_logits']  # (B, K, C)
+        # --- Majority vote across experts (unweighted) ---
+        # Each expert votes for argmax class; count votes per class.
+        B, K, C = expert_logits.size()
+        per_expert_preds = expert_logits.argmax(dim=2)                   # (B, K)
+        vote_counts = F.one_hot(per_expert_preds, num_classes=C).sum(1).float()  # (B, C)
 
-        # --- Top-1 over experts (correct dim=1) ---
-        top1_idx = torch.argmax(gate_weights, dim=1)  # (B,)
-        top1_logits = expert_logits[torch.arange(batch_size, device=expert_logits.device), top1_idx, :]
-        all_top1_outputs.append(top1_logits.detach())
-
-        # --- Top-2 mixture (still over dim=1=experts) ---
-        k2 = min(2, gate_weights.size(1))
-        top2_vals, top2_idx = torch.topk(gate_weights, k=k2, dim=1)  # (B, k2)
-        gather_idx = top2_idx.unsqueeze(-1).expand(-1, -1, expert_logits.size(-1))
-        selected_logits = torch.gather(expert_logits, dim=1, index=gather_idx)  # (B, k2, C)
-        w2 = top2_vals / (top2_vals.sum(dim=1, keepdim=True) + 1e-12)
-        top2_logits = (selected_logits * w2.unsqueeze(-1)).sum(dim=1)
-        all_top2_outputs.append(top2_logits.detach())
+        # Tiny tie-breaker: nudge by gate-weighted logits so ties resolve consistently
+        # (Counts dominate; logits are scaled tiny so they only break exact ties.)
+        mv_counts = vote_counts + 1e-3 * aggregated_outputs['logits']    # (B, C)
+        all_mv_counts.append(mv_counts.detach())
 
         total_loss += aggregated_outputs['loss_total'].item() * batch_size
         total_ce_loss += aggregated_outputs['loss_ce'].item() * batch_size
@@ -267,6 +263,13 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     final_outputs = torch.cat(all_aggregated_outputs, dim=0)
     final_targets = torch.cat(all_targets, dim=0)
     metrics = compute_metrics(final_outputs, final_targets, metric_type)
+
+    # --- Majority vote accuracy ---
+    mv_counts_all = torch.cat(all_mv_counts, dim=0)  # (N, C)
+    mv_metrics = compute_metrics(mv_counts_all, final_targets, metric_type)
+    print("Majority-vote metrics:", {f"mv_{k}": v for k, v in mv_metrics.items()})
+    for k, v in mv_metrics.items():
+        metrics[f"mv_{k}"] = v
 
     metrics['loss'] = total_loss / len(loader.dataset)
     metrics['loss_ce'] = total_ce_loss / len(loader.dataset)

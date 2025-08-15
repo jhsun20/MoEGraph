@@ -134,7 +134,8 @@ def load_dataset(config):
         'dataset_name': dataset_name,
         'shift_type': shift_type,
         'task_type': task_type,
-        'metric': datasets['metric']
+        'metric': datasets['metric'],
+        'num_envs': meta_info.num_envs
     }
     
     # Improve print statements for better readability

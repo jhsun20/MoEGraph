@@ -53,8 +53,8 @@ class Experts(nn.Module):
         # --- BN freeze controls (optional; set via config['model']) ---
         mcfg_bn = config.get('model', {})
         # Freeze BN running stats (and optionally affine params) at/after this epoch. Use -1 to disable.
-        self.bn_freeze_epoch  = int(mcfg_bn.get('bn_freeze_epoch', 10))
-        self.bn_freeze_affine = bool(mcfg_bn.get('bn_freeze_affine', True))
+        self.bn_freeze_epoch  = int(mcfg_bn.get('bn_freeze_epoch', -1))
+        self.bn_freeze_affine = bool(mcfg_bn.get('bn_freeze_affine', False))
         self._bn_frozen = False
 
         self.num_experts = mcfg['num_experts']
@@ -72,6 +72,13 @@ class Experts(nn.Module):
         self.adv_warmup_epochs = int(mcfg.get('adv_warmup_epochs', 5))
         self.adv_ramp_epochs   = int(mcfg.get('adv_ramp_epochs', 20))
         self._lambda_L = 0.0  # live value
+
+        # Environment inference + EA scheduling (mirrors your LA/IB ramps)
+        self.env_inference = bool(mcfg.get('env_inference', True))
+        self.lambda_E_end = float(mcfg.get('lambda_E_end', 0.3))
+        self.ea_warmup_epochs = int(mcfg.get('ea_warmup_epochs', self.adv_warmup_epochs))
+        self.ea_ramp_epochs   = int(mcfg.get('ea_ramp_epochs',   self.adv_ramp_epochs))
+        self._lambda_E = 0.0  # live value updated in set_epoch
 
         # VIB (IB) target
         self.beta_ib_end  = float(mcfg.get('beta_ib_end', 1e-3))
@@ -104,6 +111,30 @@ class Experts(nn.Module):
         self.classifier_encoder = GINEncoderWithEdgeWeight(
             num_features, hidden_dim, num_layers, dropout, train_eps=True
         )
+
+        # --- LECI-style tiny GINs for invariant (lc) and environment (ea) heads ---
+        tiny_lc_hidden = int(mcfg.get('leci_lc_hidden', hidden_dim))
+        tiny_ea_hidden = int(mcfg.get('leci_ea_hidden', hidden_dim))
+        tiny_depth     = int(mcfg.get('leci_depth', 2))
+        tiny_drop      = float(mcfg.get('leci_dropout', dropout))
+
+        # One tiny lc_gnn and ea_gnn per expert (keeps behavior closest to LECI while preserving MoE)
+        self.lc_encoders = nn.ModuleList([
+            GINEncoderWithEdgeWeight(num_features, tiny_lc_hidden, tiny_depth, tiny_drop, train_eps=True)
+            for _ in range(self.num_experts)
+        ])
+
+        self.ea_encoders = nn.ModuleList([
+            GINEncoderWithEdgeWeight(num_features, tiny_ea_hidden, tiny_depth, tiny_drop, train_eps=True)
+            for _ in range(self.num_experts)
+        ])
+
+        # Per-expert EA classifier (predicts environment id)
+        self.num_envs = dataset_info['num_envs']
+        self.ea_classifiers = nn.ModuleList([
+            nn.Linear(tiny_ea_hidden, self.num_envs) for _ in range(self.num_experts)
+        ])
+
 
         # Per-expert maskers
         self.expert_node_masks = nn.ModuleList([
@@ -156,6 +187,13 @@ class Experts(nn.Module):
             r_adv = min((epoch - self.adv_warmup_epochs) / max(self.adv_ramp_epochs, 1), 1.0)
             self._lambda_L = float(r_adv * self.lambda_L_end)
 
+        # EA ramp (after warmup) -- mirrors LA ramp
+        if epoch < self.ea_warmup_epochs:
+            self._lambda_E = 0.0
+        else:
+            r_ea = min((epoch - self.ea_warmup_epochs) / max(self.ea_ramp_epochs, 1), 1.0)
+            self._lambda_E = float(r_ea * self.lambda_E_end)
+
         # IB ramp (after warmup)
         if epoch < self.ib_warmup_epochs:
             self._beta_ib = 0.0
@@ -188,6 +226,10 @@ class Experts(nn.Module):
               loss_total_list, loss_ce_list, loss_reg_list, loss_sem_list, loss_str_list, loss_div, rho
         """
         x, edge_index, batch = data.x, data.edge_index, data.batch
+        # Use ground-truth environment ids if available
+        env_labels = getattr(data, "env_id", None)
+        if env_labels is not None:
+            env_labels = env_labels.to(x.device).long()
 
         # Base embeddings used to produce masks
         Z = self.causal_encoder(x, edge_index, batch=batch)
@@ -195,6 +237,7 @@ class Experts(nn.Module):
 
         node_masks, edge_masks, feat_masks = [], [], []
         expert_logits, h_stable_list = [], []
+        h_ea_list = []
 
         for k in range(self.num_experts):
             node_mask_logits = self.expert_node_masks[k](Z)
@@ -219,18 +262,27 @@ class Experts(nn.Module):
             masked_x = x * node_mask * feat_mask  # (N, D)
             edge_weight = edge_mask.view(-1)
 
-            masked_Z  = self.classifier_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
-            h_stable  = global_mean_pool(masked_Z, batch)
-            logit     = self.expert_classifiers[k](h_stable)
+            # LECI-style invariant head: tiny GIN -> mean pool
+            masked_Z_lc = self.lc_encoders[k](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+            h_stable = global_mean_pool(masked_Z_lc, batch)  # h_C
+
+            # Classify with your existing per-expert classifier
+            logit = self.expert_classifiers[k](h_stable)
+
+            # Environment head: tiny GIN -> mean pool (for EA / environment inference)
+            masked_Z_ea = self.ea_encoders[k](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+            h_ea = global_mean_pool(masked_Z_ea, batch)
 
             h_stable_list.append(h_stable)
             expert_logits.append(logit)
+            h_ea_list.append(h_ea)
 
         node_masks    = torch.stack(node_masks, dim=1)        # (N, K, 1)
         edge_masks    = torch.stack(edge_masks, dim=1)        # (E, K, 1)
         feat_masks    = torch.stack(feat_masks, dim=1)        # (N, K, D)
         expert_logits = torch.stack(expert_logits, dim=1)     # (B, K, C)
         h_stable_list = torch.stack(h_stable_list, dim=1)     # (B, K, H)
+        h_ea_list     = torch.stack(h_ea_list, dim=1)         # (B, K, Hea)
         h_orig        = global_mean_pool(Z, batch)            # (B, H)
 
         out = {
@@ -262,7 +314,14 @@ class Experts(nn.Module):
                 reg_list.append(reg)
 
                 # Semantic invariance: VIB on h_C + LA on residual
-                sem = self._semantic_invariance_loss(h_masked=hC_k, labels=target, h_orig=h_orig)
+                sem = self._semantic_invariance_loss(
+                    h_masked=hC_k,
+                    labels=target,
+                    h_orig=h_orig,
+                    h_ea=h_ea_list[:, k, :],
+                    expert_idx=k,
+                    env_labels=env_labels,   # <-- pass env ids directly
+                )
                 sem_list.append(sem)
 
                 # Structural invariance currently OFF (keep explicit zero)
@@ -369,10 +428,13 @@ class Experts(nn.Module):
 
     def _semantic_invariance_loss(
         self,
-        h_masked: torch.Tensor,   # h_C (B, H)
-        labels: torch.Tensor,     # (B,)
-        h_orig: Optional[torch.Tensor] = None,  # (B, H)
-        normalize: bool = False
+        h_masked: torch.Tensor,         # h_C (B, H)
+        labels: torch.Tensor,           # (B,)
+        h_orig: Optional[torch.Tensor] = None,
+        h_ea:   Optional[torch.Tensor] = None,    # (B, Hea)
+        expert_idx: Optional[int] = None,
+        env_labels: Optional[torch.Tensor] = None,
+        normalize: bool = False,
     ) -> torch.Tensor:
         """
         VIB on h_C + LA on residual h_S = (h_orig - h_C) to discourage label signal in spur part.
@@ -381,17 +443,17 @@ class Experts(nn.Module):
         B, H = h_masked.shape
 
         # ----- VIB (q(z|h_C)) -----
-        if self.ib_mu_head_sem is None:
-            self.ib_mu_head_sem = nn.Linear(H, H).to(device)
-            self.ib_logvar_head_sem = nn.Linear(H, H).to(device)
-            nn.init.constant_(self.ib_logvar_head_sem.weight, 0.0)
-            nn.init.constant_(self.ib_logvar_head_sem.bias, -5.0)  # small var init
+        # if self.ib_mu_head_sem is None:
+        #     self.ib_mu_head_sem = nn.Linear(H, H).to(device)
+        #     self.ib_logvar_head_sem = nn.Linear(H, H).to(device)
+        #     nn.init.constant_(self.ib_logvar_head_sem.weight, 0.0)
+        #     nn.init.constant_(self.ib_logvar_head_sem.bias, -5.0)  # small var init
 
-        mu     = self.ib_mu_head_sem(h_masked)
-        logvar = self.ib_logvar_head_sem(h_masked)
-        kl_ps  = (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum(dim=1)   # [B]
-        kl_ps  = torch.clamp(kl_ps - self.ib_free_bits, min=0.0)
-        vib = self._beta_ib * kl_ps.mean()
+        # mu     = self.ib_mu_head_sem(h_masked)
+        # logvar = self.ib_logvar_head_sem(h_masked)
+        # kl_ps  = (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum(dim=1)   # [B]
+        # kl_ps  = torch.clamp(kl_ps - self.ib_free_bits, min=0.0)
+        # vib = self._beta_ib * kl_ps.mean()
 
         # ----- LA on residual h_S -----
         la = h_masked.new_tensor(0.0)
@@ -399,10 +461,47 @@ class Experts(nn.Module):
             assert h_orig is not None, "h_orig required for LA on residual"
             h_S = (h_orig.detach() - h_masked)               # keep grad through h_masked
             logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_S, self._lambda_L))
-            la = F.cross_entropy(logits_y_spur, labels) * self._lambda_L
+            la = F.cross_entropy(logits_y_spur, labels)
 
-        return vib + la
+        # --- EA on h_ea (environment adversary on G_C) ---
+        ea = h_masked.new_tensor(0.0)
+        if self._lambda_E > 0.0 and h_ea is not None and env_labels is not None:
+            # 1) sanitize env labels
+            env_tgt = env_labels.view(-1).long().to(h_ea.device)   # (B,)
+            # 2) sanity checks
+            if env_tgt.numel() != h_ea.size(0):
+                raise ValueError(f"env_labels shape {tuple(env_tgt.shape)} "
+                                f"must match batch size {h_ea.size(0)}")
+            if int(env_tgt.max()) >= self.num_envs or int(env_tgt.min()) < 0:
+                raise ValueError(f"env_labels must be in [0, {self.num_envs-1}] "
+                                f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
+            # 3) adversarial logits (GRL applies the reversed grad only to features)
+            h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
+            logits_E = self.ea_classifiers[expert_idx](h_ea_adv)   # (B, num_envs)
+            if logits_E.size(1) != self.num_envs:
+                raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
+            # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
+            ea = F.cross_entropy(logits_E, env_tgt)
 
+        return la + ea
+    
+    def _kmeans_labels(self, X: torch.Tensor, K: int, iters: int = 10) -> torch.Tensor:
+        # X: (B, D)
+        B = X.size(0)
+        # init with random samples
+        idx = torch.randperm(B, device=X.device)[:K]
+        C = X[idx].clone()  # (K, D)
+        for _ in range(max(iters, 1)):
+            # assign
+            d2 = torch.cdist(X, C, p=2.0)  # (B, K)
+            a = d2.argmin(dim=1)           # (B,)
+            # update
+            for k in range(K):
+                sel = (a == k)
+                if sel.any():
+                    C[k] = X[sel].mean(dim=0)
+        return a
+    
     def enforce_edge_mask_symmetry(self, edge_index: torch.Tensor,
                                 edge_mask: torch.Tensor,
                                 num_nodes: int) -> torch.Tensor:
