@@ -96,12 +96,10 @@ class Experts(nn.Module):
         # -------- MI hyperparams (defaults if absent) --------
         mcfg = config.get('model', {})
         self.num_envs = int(mcfg.get('num_envs', 3))
+        self.ib_beta_mask = float(mcfg.get('ib_beta_mask', 0.001))   # 0 disables
         # semantic EA/LA
         self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 0.3))
         self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 0.3))
-        # structural EA/LA
-        self.mi_mu_e_str = float(mcfg.get('mi_mu_e_str', 0.1))
-        self.mi_mu_l_str = float(mcfg.get('mi_mu_l_str', 0.1))
         # VIB
         self.vib_mu = nn.Linear(hidden_dim, hidden_dim)
         self.vib_logvar = nn.Linear(hidden_dim, hidden_dim)
@@ -145,6 +143,14 @@ class Experts(nn.Module):
         self.rho_edge = nn.Parameter(torch.empty(num_experts).uniform_(0.2, 0.8))
         self.rho_feat = nn.Parameter(torch.empty(num_experts).uniform_(0.2, 0.8))
 
+        # Mask temperature annealing
+        self.mask_temp_start = float(mcfg.get('mask_temp_start', 5.0))
+        self.mask_temp_end   = float(mcfg.get('mask_temp_end', 0.1))
+        self.mask_temp_anneal_epochs = int(mcfg.get('mask_temp_anneal_epochs', 40))
+        self.mask_temp_schedule = str(mcfg.get('mask_temp_schedule', 'exp'))
+        self._mask_temp = self.mask_temp_start
+
+
     def forward(self, data, target=None, embeddings_by_env=None, labels_by_env=None):
         """
         Forward pass with integrated loss computation for multiple experts.
@@ -182,9 +188,10 @@ class Experts(nn.Module):
             edge_mask_logits = self.expert_edge_masks[expert_idx](edge_feat)
             feat_mask_logits = self.expert_feat_masks[expert_idx](Z)
 
-            node_mask = self._hard_concrete_mask(node_mask_logits, temperature=0.1)
-            edge_mask = self._hard_concrete_mask(edge_mask_logits, temperature=0.1)
-            feat_mask = self._hard_concrete_mask(feat_mask_logits, temperature=0.1)
+            node_mask = self._hard_concrete_mask(node_mask_logits, temperature=self._mask_temp)
+            edge_mask = self._hard_concrete_mask(edge_mask_logits, temperature=self._mask_temp)
+            feat_mask = self._hard_concrete_mask(feat_mask_logits, temperature=self._mask_temp)
+
             
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
@@ -277,7 +284,8 @@ class Experts(nn.Module):
                     labels=target,
                     h_orig=h_orig,
                     lambda_e=self.mi_lambda_e_sem,
-                    lambda_l=self.mi_lambda_l_sem
+                    lambda_l=self.mi_lambda_l_sem,
+                    ib_beta=self.ib_beta_mask
                 )
                 sem_loss_list.append(sem_loss)
 
@@ -323,15 +331,15 @@ class Experts(nn.Module):
         return output
     
     def _hard_concrete_mask(self, logits, temperature=0.1):
-        """
-        Sample a hard 0/1 mask from logits with straight-through gradient.
-        """
-        uniform_noise = torch.rand_like(logits)
-        gumbel_noise = -torch.log(-torch.log(uniform_noise + 1e-20) + 1e-20)
-        y_soft = torch.sigmoid((logits + gumbel_noise) / temperature)
+        if self.training:
+            u = torch.rand_like(logits)
+            g = -torch.log(-torch.log(u + 1e-20) + 1e-20)
+            y_soft = torch.sigmoid((logits + g) / temperature)
+        else:
+            y_soft = torch.sigmoid(logits / max(temperature, 1e-6))
         y_hard = (y_soft > 0.5).float()
         return y_hard + (y_soft - y_soft.detach())
-
+    
     def compute_classification_loss(self, pred, target, use_weights=True):
         if use_weights:
             num_classes = pred.size(1)
@@ -671,3 +679,19 @@ class Experts(nn.Module):
             vecs.append(G.flatten())
 
         return torch.stack(vecs, dim=0)  # (B, bins*bins)
+
+    def update_mask_temperature(self, epoch: int):
+        if self.mask_temp_anneal_epochs <= 0:
+            self._mask_temp = self.mask_temp_end
+            return
+        t0, t1 = self.mask_temp_start, self.mask_temp_end
+        r = min(1.0, max(0.0, epoch / float(self.mask_temp_anneal_epochs)))
+        if self.mask_temp_schedule == 'linear':
+            self._mask_temp = t0 + (t1 - t0) * r
+        else:  # 'exp' default: smooth early, faster later
+            self._mask_temp = t0 * ((t1 / t0) ** r)
+
+    def set_epoch(self, epoch: int):
+        self.update_mask_temperature(epoch)
+
+

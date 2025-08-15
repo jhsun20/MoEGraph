@@ -373,9 +373,12 @@ class MoE(nn.Module):
             raise ValueError(f"Unsupported load balance loss type: {loss_type}")
 
         return load_balance_loss
-    
+
+
     def set_epoch(self, epoch: int):
         self.current_epoch = epoch
+        self.shared_model.set_epoch(epoch)   # NEW: update mask temperature too
+
 
     def get_expert_outputs(self, data):
         """
