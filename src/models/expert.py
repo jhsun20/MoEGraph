@@ -236,10 +236,6 @@ class Experts(nn.Module):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         # Use ground-truth environment ids if available
         env_labels = getattr(data, "env_id", None)
-        if env_labels is not None:
-            env_labels = env_labels.to(x.device).long().view(-1)
-            env_labels = self._remap_env_labels(env_labels)  # <-- normalize to 0..K-1
-
 
         # Base embeddings used to produce masks
         Z = self.causal_encoder(x, edge_index, batch=batch)
