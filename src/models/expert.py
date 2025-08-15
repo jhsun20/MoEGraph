@@ -83,6 +83,7 @@ class Experts(nn.Module):
         self.mask_temp_anneal_epochs  = int(mcfg.get('mask_temp_anneal_epochs', 40))
         self.mask_temp_schedule       = str(mcfg.get('mask_temp_schedule', 'exp'))
         self._mask_temp               = self.mask_temp_start
+        self.eval_mask_temp_floor     = float(mcfg.get('eval_mask_temp_floor', 1.0))
 
         # ---------- Encoders / Heads ----------
         # Causal/selector encoder to get node embeddings Z for masks
@@ -186,9 +187,10 @@ class Experts(nn.Module):
             edge_mask_logits = self.expert_edge_masks[k](edge_feat)
             feat_mask_logits = self.expert_feat_masks[k](Z)
 
-            node_mask = self._hard_concrete_mask(node_mask_logits, temperature=self._mask_temp)
-            edge_mask = self._hard_concrete_mask(edge_mask_logits, temperature=self._mask_temp)
-            feat_mask = self._hard_concrete_mask(feat_mask_logits, temperature=self._mask_temp)
+            is_eval = not self.training
+            node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
+            edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
+            feat_mask = self._hard_concrete_mask(feat_mask_logits, self._mask_temp, is_eval=is_eval)
 
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
@@ -271,13 +273,17 @@ class Experts(nn.Module):
         return out
 
     # ----------------- Internals -----------------
-    def _hard_concrete_mask(self, logits, temperature=0.1):
+    def _hard_concrete_mask(self, logits, temperature=0.1, is_eval=False):
+        # choose a temperature for eval that won't saturate
+        T = max(temperature, self.eval_mask_temp_floor) if is_eval else max(temperature, 1e-6)
+
         if self.training:
             u = torch.rand_like(logits)
             g = -torch.log(-torch.log(u + 1e-20) + 1e-20)
-            y_soft = torch.sigmoid((logits + g) / max(temperature, 1e-6))
+            y_soft = torch.sigmoid((logits + g) / T)
         else:
-            y_soft = torch.sigmoid(logits / max(temperature, 1e-6))
+            y_soft = torch.sigmoid(logits / T)
+
         y_hard = (y_soft > 0.5).float()
         return y_hard + (y_soft - y_soft.detach())
 
@@ -372,7 +378,7 @@ class Experts(nn.Module):
         la = h_masked.new_tensor(0.0)
         if self._lambda_L > 0.0:
             assert h_orig is not None, "h_orig required for LA on residual"
-            h_S = (h_orig.detach() - h_masked).detach()
+            h_S = (h_orig.detach() - h_masked)               # keep grad through h_masked
             logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_S, self._lambda_L))
             la = F.cross_entropy(logits_y_spur, labels) * self._lambda_L
 

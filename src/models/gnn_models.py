@@ -186,13 +186,12 @@ class GINConvWithEdgeWeight(MessagePassing):
     def __repr__(self):
         return f'{self.__class__.__name__}(nn={self.nn})'
     
-
 class GINEncoderWithEdgeWeight(nn.Module):
     def __init__(self, in_dim, hidden_dim, num_layers, dropout=0.5, train_eps=False):
         super().__init__()
         self.convs = nn.ModuleList()
-        self.bns = nn.ModuleList()
-        self.acts = nn.ModuleList()
+        self.bns   = nn.ModuleList()   # keep attribute name to avoid touching caller code
+        self.acts  = nn.ModuleList()
 
         for i in range(num_layers):
             input_dim = in_dim if i == 0 else hidden_dim
@@ -203,15 +202,19 @@ class GINEncoderWithEdgeWeight(nn.Module):
             )
             conv = GINConvWithEdgeWeight(mlp, train_eps=train_eps)
             self.convs.append(conv)
-            self.bns.append(BatchNorm(hidden_dim))
+
+            # >>> swapped BatchNorm for LayerNorm (node-wise) <<<
+            # PyG's LayerNorm normalizes per-node feature vector: shape (N, C)
+            self.bns.append(LayerNorm(hidden_dim, affine=True, mode='node'))
+
             self.acts.append(nn.ReLU())
 
-        self.dropout = dropout
+        self.dropout = float(dropout)
 
     def forward(self, x, edge_index, edge_weight=None, batch=None):
         for conv, bn, act in zip(self.convs, self.bns, self.acts):
             x = conv(x, edge_index, edge_weight)
-            x = bn(x)
+            x = bn(x)          # now a LayerNorm
             x = act(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        return x  # (N, hidden_dim): node-level embeddings
+        return x  # (N, hidden_dim)
