@@ -67,14 +67,14 @@ class Experts(nn.Module):
         # VIB (IB) target
         self.beta_ib_end  = float(mcfg.get('beta_ib_end', 1e-3))
         self.ib_warmup_epochs  = int(mcfg.get('ib_warmup_epochs', 5))
-        self.ib_ramp_epochs    = int(mcfg.get('ib_ramp_epochs', 10))
+        self.ib_ramp_epochs    = int(mcfg.get('ib_ramp_epochs', 20))
         self.ib_free_bits      = float(mcfg.get('ib_free_bits', 0.5))
         self._beta_ib = 0.0  # live value
 
         # Structural invariance (live) weight schedule (even while str_loss=0.0 for now)
         self.weight_str_end       = float(mcfg.get('weight_str_end', self.weight_str))
         self.strinv_warmup_epochs = int(mcfg.get('strinv_warmup_epochs', 5))
-        self.strinv_ramp_epochs   = int(mcfg.get('strinv_ramp_epochs', 10))
+        self.strinv_ramp_epochs   = int(mcfg.get('strinv_ramp_epochs', 20))
         self._weight_str_live     = 0.0
 
         # Mask temperature schedule (hard-concrete)
