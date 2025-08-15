@@ -249,12 +249,14 @@ class Experts(nn.Module):
         expert_logits, h_stable_list = [], []
         h_ea_list = []
 
+        is_eval = not self.training
+
         for k in range(self.num_experts):
             node_mask_logits = self.expert_node_masks[k](Z)
             edge_mask_logits = self.expert_edge_masks[k](edge_feat)
             feat_mask_logits = self.expert_feat_masks[k](Z)
 
-            is_eval = not self.training
+            
             node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
             # Enforce symmetry for edges that have reverse edges
@@ -323,33 +325,28 @@ class Experts(nn.Module):
                 )
                 reg_list.append(reg)
 
-                # Semantic invariance: VIB on h_C + LA on residual
-                # --- LA on complement subgraph (G_S) ---
-                # choose an encoder: reuse classifier_encoder OR a dedicated tiny spur encoder
-                spur_encoder = getattr(self, 'spur_encoders', None)
-                if spur_encoder is not None:
-                    spur_enc = spur_encoder[k]
+                if not is_eval:
+                    # Semantic invariance: VIB on h_C + LA on residual
+                    h_spur = self._encode_complement_subgraph(
+                        data=data,
+                        node_mask=node_mask,           # (N,1) or (N,)
+                        edge_mask=edge_mask.view(-1),  # (E,)
+                        feat_mask=feat_mask,           # (N,F) or (F,)
+                        encoder=self.la_encoders[k],
+                        symmetrize=False,              # set True if you want undirected EW averaging
+                    )
+
+                    sem = self._semantic_invariance_loss(
+                        h_masked=hC_k,
+                        labels=target,
+                        h_orig=h_orig,
+                        h_ea=h_ea_list[:, k, :],
+                        h_spur=h_spur,
+                        expert_idx=k,
+                        env_labels=env_labels,   # <-- pass env ids directly
+                    )
                 else:
-                    spur_enc = self.classifier_encoder  # minimal change: reuse main classifier encoder
-
-                h_spur = self._encode_complement_subgraph(
-                    data=data,
-                    node_mask=node_mask,           # (N,1) or (N,)
-                    edge_mask=edge_mask.view(-1),  # (E,)
-                    feat_mask=feat_mask,           # (N,F) or (F,)
-                    encoder=self.la_encoders[k],
-                    symmetrize=False,              # set True if you want undirected EW averaging
-                )
-
-                sem = self._semantic_invariance_loss(
-                    h_masked=hC_k,
-                    labels=target,
-                    h_orig=h_orig,
-                    h_ea=h_ea_list[:, k, :],
-                    h_spur=h_spur,
-                    expert_idx=k,
-                    env_labels=env_labels,   # <-- pass env ids directly
-                )
+                    sem = hC_k.new_tensor(0.0)
                 sem_list.append(sem)
 
                 # Structural invariance currently OFF (keep explicit zero)
