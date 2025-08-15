@@ -67,20 +67,20 @@ class Experts(nn.Module):
         # VIB (IB) target
         self.beta_ib_end  = float(mcfg.get('beta_ib_end', 1e-3))
         self.ib_warmup_epochs  = int(mcfg.get('ib_warmup_epochs', 5))
-        self.ib_ramp_epochs    = int(mcfg.get('ib_ramp_epochs', 20))
+        self.ib_ramp_epochs    = int(mcfg.get('ib_ramp_epochs', 10))
         self.ib_free_bits      = float(mcfg.get('ib_free_bits', 0.5))
         self._beta_ib = 0.0  # live value
 
         # Structural invariance (live) weight schedule (even while str_loss=0.0 for now)
         self.weight_str_end       = float(mcfg.get('weight_str_end', self.weight_str))
         self.strinv_warmup_epochs = int(mcfg.get('strinv_warmup_epochs', 5))
-        self.strinv_ramp_epochs   = int(mcfg.get('strinv_ramp_epochs', 20))
+        self.strinv_ramp_epochs   = int(mcfg.get('strinv_ramp_epochs', 10))
         self._weight_str_live     = 0.0
 
         # Mask temperature schedule (hard-concrete)
-        self.mask_temp_start          = float(mcfg.get('mask_temp_start', 5.0))
+        self.mask_temp_start          = float(mcfg.get('mask_temp_start', 2.0))
         self.mask_temp_end            = float(mcfg.get('mask_temp_end', 0.1))
-        self.mask_temp_anneal_epochs  = int(mcfg.get('mask_temp_anneal_epochs', 40))
+        self.mask_temp_anneal_epochs  = int(mcfg.get('mask_temp_anneal_epochs', 10))
         self.mask_temp_schedule       = str(mcfg.get('mask_temp_schedule', 'exp'))
         self._mask_temp               = self.mask_temp_start
         self.eval_mask_temp_floor     = float(mcfg.get('eval_mask_temp_floor', 1.0))
@@ -190,7 +190,12 @@ class Experts(nn.Module):
             is_eval = not self.training
             node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
+            # Enforce symmetry for edges that have reverse edges
+            edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
             feat_mask = self._hard_concrete_mask(feat_mask_logits, self._mask_temp, is_eval=is_eval)
+            # if k == 0:  # or pick any expert index you want to monitor
+            #     report = mask_symmetry_report(edge_index, edge_mask.view(-1))
+            #     print(f"[Symmetry check, Expert {k}] {report}")
 
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
@@ -383,3 +388,152 @@ class Experts(nn.Module):
             la = F.cross_entropy(logits_y_spur, labels) * self._lambda_L
 
         return vib + la
+
+    def enforce_edge_mask_symmetry(self, edge_index: torch.Tensor,
+                                edge_mask: torch.Tensor,
+                                num_nodes: int) -> torch.Tensor:
+        """
+        Post-hoc symmetrize edge_mask across (i,j) and (j,i) only if both directions exist.
+        Does NOT create new edges. Self-loops are unaffected.
+
+        Args:
+            edge_index : LongTensor [2, E] - directed edges
+            edge_mask  : Tensor [E] or [E,1] - mask values
+            num_nodes  : int - number of nodes (for pair indexing)
+
+        Returns:
+            sym_edge_mask: Tensor with the same shape as edge_mask, symmetric where possible.
+        """
+        # Flatten to [E]
+        m = edge_mask.view(-1)
+        row, col = edge_index[0], edge_index[1]
+
+        # Unique undirected pair IDs
+        u = torch.minimum(row, col)
+        v = torch.maximum(row, col)
+        pair_id = u * num_nodes + v
+
+        uniq, inv, counts = torch.unique(pair_id, return_inverse=True, return_counts=True)
+        has_both = (counts == 2)
+        sel = has_both[inv]  # per-edge flag
+
+        if sel.any():
+            inv_sel = inv[sel]
+            m_sel = m[sel]
+
+            # Aggregate across both directions
+            sum_per = torch.zeros_like(counts, dtype=m.dtype, device=m.device)
+            cnt_per = torch.zeros_like(counts, dtype=m.dtype, device=m.device)
+            sum_per.scatter_add_(0, inv_sel, m_sel)
+            cnt_per.scatter_add_(0, inv_sel, torch.ones_like(m_sel))
+            mean_per = sum_per / cnt_per.clamp_min(1)
+
+            # Choose reducer:
+            reducer_per = mean_per  # <-- MEAN
+            # reducer_per = torch.zeros_like(mean_per).scatter_reduce_(0, inv_sel, m_sel, reduce='amax', include_self=False) or mean_per  # <-- MAX alternative
+
+            # Apply tied value back
+            m[sel] = reducer_per[inv_sel]
+
+        return m.view_as(edge_mask)
+
+
+
+@torch.no_grad()
+def mask_symmetry_report(edge_index: torch.Tensor,
+                         edge_mask: torch.Tensor,
+                         num_nodes: int = None,
+                         atol: float = 1e-6):
+    """
+    Checks if edge masks are symmetric for undirected pairs (i, j) vs (j, i).
+
+    Args:
+        edge_index: LongTensor [2, E] (directed list; may contain both directions)
+        edge_mask:  Tensor   [E]     (mask for each directed edge)
+        num_nodes:  int or None      (used to create unique pair ids; inferred if None)
+        atol:       float            (tolerance for considering masks equal)
+
+    Returns:
+        dict with:
+          - symmetric_fraction: fraction of undirected pairs with both directions present AND |m_ij - m_ji| <= atol
+          - both_dirs_fraction: fraction of undirected pairs that have both directions present
+          - max_abs_pair_diff:  max |m_ij - m_ji| observed across pairs with both directions
+          - mean_abs_pair_diff: mean |m_ij - m_ji| across pairs with both directions
+          - num_pairs:          number of undirected (i, j) pairs (i<j) encountered
+          - num_pairs_both:     number of pairs that have both directions present
+          - note:               reminder that self-loops (i==j) are ignored here
+    """
+    assert edge_index.dim() == 2 and edge_index.size(0) == 2, "edge_index must be [2, E]"
+    E = edge_index.size(1)
+    m = edge_mask.view(-1)
+    assert m.numel() == E, "edge_mask must have length E"
+
+    row, col = edge_index[0], edge_index[1]
+    if num_nodes is None:
+        num_nodes = int(max(row.max().item(), col.max().item())) + 1
+
+    # Build unordered pair ids for i<j; ignore self-loops for the symmetry test
+    u = torch.minimum(row, col)
+    v = torch.maximum(row, col)
+    is_self = (u == v)
+    u_noself, v_noself = u[~is_self], v[~is_self]
+    m_noself = m[~is_self]
+
+    pair_id = u_noself * num_nodes + v_noself  # unique id per undirected pair (i<j)
+
+    # Group edges by pair_id
+    unique_pairs, inv, counts = torch.unique(pair_id, return_inverse=True, return_counts=True)
+    num_pairs = unique_pairs.numel()
+
+    # We only care about pairs where both directions appear
+    both_dirs_mask = (counts == 2)
+    num_pairs_both = int(both_dirs_mask.sum().item())
+
+    # Fast path: if no pairs have both directions, we can exit early
+    if num_pairs_both == 0:
+        return {
+            "symmetric_fraction": 0.0,
+            "both_dirs_fraction": 0.0,
+            "max_abs_pair_diff": float("nan"),
+            "mean_abs_pair_diff": float("nan"),
+            "num_pairs": int(num_pairs),
+            "num_pairs_both": 0,
+            "note": "Self-loops ignored; no pairs had both directions present."
+        }
+
+    # For each pair with both directions, compute |m_ij - m_ji|
+    # We'll do a tiny loop only over those pairs (diagnostic speed is fine).
+    # Build an index list of edges belonging to each 'both-dir' pair
+    pair_to_edges = [[] for _ in range(num_pairs)]
+    for e_idx, p_idx in enumerate(inv.tolist()):
+        pair_to_edges[p_idx].append(e_idx)
+
+    diffs = []
+    good = 0
+    for p_idx, has2 in enumerate(both_dirs_mask.tolist()):
+        if not has2:
+            continue
+        e_list = pair_to_edges[p_idx]
+        assert len(e_list) == 2, "count==2 but did not collect 2 edges — unexpected"
+        m1, m2 = m_noself[e_list[0]].item(), m_noself[e_list[1]].item()
+        d = abs(m1 - m2)
+        diffs.append(d)
+        if d <= atol:
+            good += 1
+
+    diffs_t = torch.tensor(diffs, dtype=torch.float32)
+    symmetric_fraction = good / num_pairs_both
+    both_dirs_fraction = num_pairs_both / max(1, num_pairs)
+    max_abs_pair_diff = float(diffs_t.max().item())
+    mean_abs_pair_diff = float(diffs_t.mean().item())
+
+    return {
+        "symmetric_fraction": symmetric_fraction,
+        "both_dirs_fraction": both_dirs_fraction,
+        "max_abs_pair_diff": max_abs_pair_diff,
+        "mean_abs_pair_diff": mean_abs_pair_diff,
+        "num_pairs": int(num_pairs),
+        "num_pairs_both": int(num_pairs_both),
+        "note": "Self-loops (i==j) ignored; symmetry is evaluated only where both directions exist."
+    }
+
