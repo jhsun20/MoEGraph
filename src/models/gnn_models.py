@@ -216,7 +216,7 @@ class GINEncoderWithEdgeWeight(nn.Module):
     def forward(self, x, edge_index, edge_weight=None, batch=None):
         for conv, bn, act in zip(self.convs, self.bns, self.acts):
             x = conv(x, edge_index, edge_weight)
-            x = bn(x)          # now a LayerNorm
+            x = bn(x)
             x = act(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         return x  # (N, hidden_dim)

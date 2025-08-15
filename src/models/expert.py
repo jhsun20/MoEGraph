@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from typing import Optional
 
 from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import BatchNorm as PYG_BatchNorm  # for isinstance checks
 from models.gnn_models import GINEncoderWithEdgeWeight
 
 
@@ -48,6 +49,14 @@ class Experts(nn.Module):
         hidden_dim   = mcfg['hidden_dim']
         num_layers   = mcfg['num_layers']
         dropout      = mcfg['dropout']
+
+        # --- BN freeze controls (optional; set via config['model']) ---
+        mcfg_bn = config.get('model', {})
+        # Freeze BN running stats (and optionally affine params) at/after this epoch. Use -1 to disable.
+        self.bn_freeze_epoch  = int(mcfg_bn.get('bn_freeze_epoch', 10))
+        self.bn_freeze_affine = bool(mcfg_bn.get('bn_freeze_affine', True))
+        self._bn_frozen = False
+
         self.num_experts = mcfg['num_experts']
         self.verbose    = config['experiment']['debug']['verbose']
 
@@ -165,6 +174,11 @@ class Experts(nn.Module):
             print(f"[Experts.set_epoch] epoch={epoch} | temp={self._mask_temp:.3f} "
                   f"| lambda_L={self._lambda_L:.4f} | beta_ib={self._beta_ib:.6f} "
                   f"| w_str_live={self._weight_str_live:.4f}")
+            
+        # Optionally freeze BN at/after a chosen epoch (once).
+        if (not self._bn_frozen) and (self.bn_freeze_epoch >= 0) and (epoch >= self.bn_freeze_epoch):
+            self._freeze_bn(freeze_affine=self.bn_freeze_affine, verbose=self.verbose)
+            self._bn_frozen = True
 
     def forward(self, data, target=None):
         """
@@ -437,9 +451,29 @@ class Experts(nn.Module):
 
         return m.view_as(edge_mask)
 
+    # ----------------- BN control -----------------
+    def _freeze_bn(self, freeze_affine: bool = False, verbose: bool = False):
+        """
+        Puts all BN layers contained in this Experts module (including sub-encoders)
+        into eval() so they use running stats, and optionally freezes affine params.
+        """
+        bn_count = 0
+        for m in self.modules():
+            # Cover both torch.nn BN and PyG BN
+            if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, PYG_BatchNorm)):
+                m.eval()  # stop updating running_mean/var; use buffers
+                # (Optional) also stop training gamma/beta
+                if freeze_affine:
+                    if hasattr(m, 'weight') and m.weight is not None:
+                        m.weight.requires_grad_(False)
+                    if hasattr(m, 'bias') and m.bias is not None:
+                        m.bias.requires_grad_(False)
+                bn_count += 1
+        if verbose:
+            aff = " + affine" if freeze_affine else ""
+            print(f"[Experts] Frozen {bn_count} BatchNorm layers (running stats{aff}).")
 
 
-@torch.no_grad()
 def mask_symmetry_report(edge_index: torch.Tensor,
                          edge_mask: torch.Tensor,
                          num_nodes: int = None,
