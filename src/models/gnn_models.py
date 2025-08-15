@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GINConv, SAGEConv, global_mean_pool, global_max_pool, global_add_pool, MessagePassing, BatchNorm
 from torch_geometric.utils import add_self_loops, remove_self_loops, softmax
+from torch_geometric.nn.norm import LayerNorm  # <-- use PyG LayerNorm (node-wise)
 
 
 class GCN(nn.Module):
