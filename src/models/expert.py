@@ -482,6 +482,9 @@ class Experts(nn.Module):
             nn.init.constant_(self.ib_logvar_head_sem.weight, 0.0)
             nn.init.constant_(self.ib_logvar_head_sem.bias, -5.0)  # exp(-5) ≈ 0.0067
 
+        mu = self.ib_mu_head_sem(h_masked)            # (B, H)
+        logvar = self.ib_logvar_head_sem(h_masked)    # (B, H)
+
         # kl_per_sample: [B] after summing over latent dims
         kl_ps = (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum(dim=1)
         # free-bits: only penalize above threshold
