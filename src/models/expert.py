@@ -480,6 +480,7 @@ class Experts(nn.Module):
         # --- LA on complement embedding ---
         if h_spur is None:
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
+        la = h_masked.new_tensor(0.0)
         if self._lambda_L > 0.:
             logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_spur, self._lambda_L))
             la = F.cross_entropy(logits_y_spur, labels)
