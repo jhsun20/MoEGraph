@@ -206,7 +206,8 @@ class GINEncoderWithEdgeWeight(nn.Module):
 
             # >>> swapped BatchNorm for LayerNorm (node-wise) <<<
             # PyG's LayerNorm normalizes per-node feature vector: shape (N, C)
-            self.bns.append(LayerNorm(hidden_dim, affine=True, mode='node'))
+            # self.bns.append(LayerNorm(hidden_dim, affine=True, mode='node'))
+            self.bns.append(BatchNorm(hidden_dim))
 
             self.acts.append(nn.ReLU())
 
