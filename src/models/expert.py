@@ -6,6 +6,7 @@ from typing import Optional
 from torch_geometric.nn import global_mean_pool
 from torch_geometric.nn import BatchNorm as PYG_BatchNorm  # for isinstance checks
 from models.gnn_models import GINEncoderWithEdgeWeight
+from torch_geometric.utils import to_undirected
 
 
 # -----------------------
@@ -68,14 +69,14 @@ class Experts(nn.Module):
 
         # ---------- Schedulers (mask temp, LA ramp, IB ramp, STR ramp) ----------
         # LA (label adversary) target
-        self.lambda_L_end = float(mcfg.get('lambda_L_end', mcfg.get('mi_lambda_l_sem', 0.3)))
+        self.lambda_L_end = float(mcfg.get('lambda_L_end', mcfg.get('mi_lambda_l_sem', 0.1)))
         self.adv_warmup_epochs = int(mcfg.get('adv_warmup_epochs', 5))
         self.adv_ramp_epochs   = int(mcfg.get('adv_ramp_epochs', 20))
         self._lambda_L = 0.0  # live value
 
         # Environment inference + EA scheduling (mirrors your LA/IB ramps)
         self.env_inference = bool(mcfg.get('env_inference', True))
-        self.lambda_E_end = float(mcfg.get('lambda_E_end', 0.3))
+        self.lambda_E_end = float(mcfg.get('lambda_E_end', 0.01))
         self.ea_warmup_epochs = int(mcfg.get('ea_warmup_epochs', self.adv_warmup_epochs))
         self.ea_ramp_epochs   = int(mcfg.get('ea_ramp_epochs',   self.adv_ramp_epochs))
         self._lambda_E = 0.0  # live value updated in set_epoch
@@ -115,6 +116,7 @@ class Experts(nn.Module):
         # --- LECI-style tiny GINs for invariant (lc) and environment (ea) heads ---
         tiny_lc_hidden = int(mcfg.get('leci_lc_hidden', hidden_dim))
         tiny_ea_hidden = int(mcfg.get('leci_ea_hidden', hidden_dim))
+        tiny_la_hidden = int(mcfg.get('leci_la_hidden', hidden_dim))
         tiny_depth     = int(mcfg.get('leci_depth', 2))
         tiny_drop      = float(mcfg.get('leci_dropout', dropout))
 
@@ -133,6 +135,12 @@ class Experts(nn.Module):
         self.num_envs = dataset_info['num_envs']
         self.ea_classifiers = nn.ModuleList([
             nn.Linear(tiny_ea_hidden, self.num_envs) for _ in range(self.num_experts)
+        ])
+
+        # --- LECI-style tiny GINs for the LA (spur/complement) branch ---
+        self.la_encoders = nn.ModuleList([
+            GINEncoderWithEdgeWeight(num_features, tiny_la_hidden, tiny_depth, tiny_drop, train_eps=True)
+            for _ in range(self.num_experts)
         ])
 
 
@@ -229,7 +237,9 @@ class Experts(nn.Module):
         # Use ground-truth environment ids if available
         env_labels = getattr(data, "env_id", None)
         if env_labels is not None:
-            env_labels = env_labels.to(x.device).long()
+            env_labels = env_labels.to(x.device).long().view(-1)
+            env_labels = self._remap_env_labels(env_labels)  # <-- normalize to 0..K-1
+
 
         # Base embeddings used to produce masks
         Z = self.causal_encoder(x, edge_index, batch=batch)
@@ -314,11 +324,29 @@ class Experts(nn.Module):
                 reg_list.append(reg)
 
                 # Semantic invariance: VIB on h_C + LA on residual
+                # --- LA on complement subgraph (G_S) ---
+                # choose an encoder: reuse classifier_encoder OR a dedicated tiny spur encoder
+                spur_encoder = getattr(self, 'spur_encoders', None)
+                if spur_encoder is not None:
+                    spur_enc = spur_encoder[k]
+                else:
+                    spur_enc = self.classifier_encoder  # minimal change: reuse main classifier encoder
+
+                h_spur = self._encode_complement_subgraph(
+                    data=data,
+                    node_mask=node_mask,           # (N,1) or (N,)
+                    edge_mask=edge_mask.view(-1),  # (E,)
+                    feat_mask=feat_mask,           # (N,F) or (F,)
+                    encoder=self.la_encoders[k],
+                    symmetrize=False,              # set True if you want undirected EW averaging
+                )
+
                 sem = self._semantic_invariance_loss(
                     h_masked=hC_k,
                     labels=target,
                     h_orig=h_orig,
                     h_ea=h_ea_list[:, k, :],
+                    h_spur=h_spur,
                     expert_idx=k,
                     env_labels=env_labels,   # <-- pass env ids directly
                 )
@@ -432,6 +460,7 @@ class Experts(nn.Module):
         labels: torch.Tensor,           # (B,)
         h_orig: Optional[torch.Tensor] = None,
         h_ea:   Optional[torch.Tensor] = None,    # (B, Hea)
+        h_spur: Optional[torch.Tensor] = None,    # (B, H_spur)
         expert_idx: Optional[int] = None,
         env_labels: Optional[torch.Tensor] = None,
         normalize: bool = False,
@@ -455,13 +484,19 @@ class Experts(nn.Module):
         # kl_ps  = torch.clamp(kl_ps - self.ib_free_bits, min=0.0)
         # vib = self._beta_ib * kl_ps.mean()
 
-        # ----- LA on residual h_S -----
-        la = h_masked.new_tensor(0.0)
-        if self._lambda_L > 0.0:
-            assert h_orig is not None, "h_orig required for LA on residual"
-            h_S = (h_orig.detach() - h_masked)               # keep grad through h_masked
-            logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_S, self._lambda_L))
-            la = F.cross_entropy(logits_y_spur, labels)
+        # --- LA on complement embedding ---
+        if h_spur is None:
+            raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
+        if not hasattr(self, 'lbl_head_spur_sem') or self.lbl_head_spur_sem is None:
+            Hs = h_spur.size(1)
+            hidden = max(64, min(256, Hs))
+            self.lbl_head_spur_sem = nn.Sequential(
+                nn.Linear(Hs, hidden), nn.ReLU(),
+                nn.Linear(hidden, self.num_classes)
+            ).to(h_spur.device)
+        logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_spur, self._lambda_L))
+        la = F.cross_entropy(logits_y_spur, labels)
+
 
         # --- EA on h_ea (environment adversary on G_C) ---
         ea = h_masked.new_tensor(0.0)
@@ -501,6 +536,60 @@ class Experts(nn.Module):
                 if sel.any():
                     C[k] = X[sel].mean(dim=0)
         return a
+    
+    def _encode_complement_subgraph(
+        self,
+        data,
+        node_mask: torch.Tensor,   # (N,) or (N,1)
+        edge_mask: torch.Tensor,   # (E,) or (E,1)
+        feat_mask: torch.Tensor,   # (F,) or (N,F)
+        encoder: torch.nn.Module,  # e.g., self.classifier_encoder or a tiny spur encoder
+        symmetrize: bool = False,  # set True if your graph is undirected and you want EW symmetry
+    ):
+        """
+        Build spur graph G_S by complementing masks (1 - mask) and re-encode to get h_S.
+
+        Returns:
+        h_spur: (B, H_enc) pooled embedding of complement subgraph.
+        """
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        N, F = x.size()
+        device = x.device
+
+        # --- clamp + shape ---
+        node_m = node_mask
+        if node_m.dim() == 1: node_m = node_m.view(-1, 1)
+        node_m = node_m.clamp(0.0, 1.0)                     # (N,1)
+
+        edge_m = edge_mask
+        if edge_m.dim() == 1: edge_m = edge_m.view(-1, 1)
+        edge_m = edge_m.clamp(0.0, 1.0).view(-1)            # (E,)
+
+        feat_m = feat_mask.clamp(0.0, 1.0)
+        if feat_m.dim() == 1:
+            feat_m = feat_m.view(1, -1).expand(N, -1)       # (N,F)
+        elif feat_m.size(0) == 1:
+            feat_m = feat_m.expand(N, -1)                   # (N,F)
+        elif feat_m.size(0) != N or feat_m.size(1) != F:
+            raise ValueError(f"feat_mask must be (F,), (1,F), or (N,F); got {tuple(feat_mask.shape)}")
+
+        # --- complement masks ---
+        node_m_S = 1.0 - node_m                              # (N,1)
+        edge_m_S = 1.0 - edge_m                              # (E,)
+        feat_m_S = 1.0 - feat_m                              # (N,F)
+
+        # --- apply to features (node-wise * feature-wise) ---
+        x_spur = (x * node_m_S) * feat_m_S                   # (N,F)
+
+        # --- optional symmetrization of edge weights for undirected graphs ---
+        ei, ew_spur = edge_index, edge_m_S
+        if symmetrize:
+            ei, ew_spur = to_undirected(ei, ew_spur, reduce='mean')
+
+        # --- encode + pool ---
+        Z_spur = encoder(x_spur, ei, batch=batch, edge_weight=ew_spur)
+        h_spur = global_mean_pool(Z_spur, batch)             # (B,H_enc)
+        return h_spur
     
     def enforce_edge_mask_symmetry(self, edge_index: torch.Tensor,
                                 edge_mask: torch.Tensor,
@@ -549,6 +638,51 @@ class Experts(nn.Module):
             m[sel] = reducer_per[inv_sel]
 
         return m.view_as(edge_mask)
+    
+    def _remap_env_labels(self, env_labels: torch.Tensor) -> torch.Tensor:
+        """
+        Map raw environment IDs (possibly {1,2,3} or {2,4,7}, etc.) to contiguous 0..K-1 ids,
+        keeping the mapping consistent across batches.
+        """
+        env_labels = env_labels.view(-1).long()
+        device = env_labels.device
+
+        # Lazily build/update mapping dicts
+        if not hasattr(self, "_env_label_map"):
+            self._env_label_map = {}   # raw_id -> mapped_id
+            self._env_label_inv = []   # mapped_id -> raw_id
+
+        # Add unseen raw ids to mapping
+        uniq = torch.unique(env_labels).tolist()
+        for raw in sorted(uniq):
+            if raw not in self._env_label_map:
+                self._env_label_map[raw] = len(self._env_label_inv)
+                self._env_label_inv.append(raw)
+
+        # Safety: ensure classifier has enough outputs
+        num_seen = len(self._env_label_inv)
+        if num_seen > self.num_envs:
+            raise ValueError(
+                f"num_envs={self.num_envs} is smaller than the number of distinct env ids seen={num_seen}. "
+                "Increase model.num_envs (and ensure ea_classifiers out_features match)."
+            )
+
+        # Vectorized remap
+        mapped = env_labels.clone()
+        # Build a tensor lookup table for speed: size = max_raw+1, fill with -1 then assign
+        max_raw = int(max(self._env_label_inv))
+        lut = torch.full((max_raw + 1,), -1, dtype=torch.long, device=device)
+        for raw, mapped_id in self._env_label_map.items():
+            lut[raw] = mapped_id
+        mapped = lut[mapped]  # (B,)
+
+        # Final sanity
+        if (mapped < 0).any():
+            bad = env_labels[(mapped < 0).nonzero(as_tuple=True)[0]][:5]
+            raise RuntimeError(f"Found unmapped env ids in batch (examples: {bad.tolist()}).")
+
+        return mapped
+
 
     # ----------------- BN control -----------------
     def _freeze_bn(self, freeze_affine: bool = False, verbose: bool = False):
