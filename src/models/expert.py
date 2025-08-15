@@ -95,6 +95,19 @@ class Experts(nn.Module):
 
         # -------- MI hyperparams (defaults if absent) --------
         mcfg = config.get('model', {})
+
+        # target strengths (defaults fall back to your existing config values)
+        self.lambda_L_end = float(mcfg.get('lambda_L_end', mcfg.get('mi_lambda_l_sem', 0.3)))
+        self.lambda_E_end = float(mcfg.get('lambda_E_end', 0.0))  # for EA if you add it later
+
+        # warmup + ramp (epochs)
+        self.adv_warmup_epochs = int(mcfg.get('adv_warmup_epochs', 5))   # adversaries off
+        self.adv_ramp_epochs   = int(mcfg.get('adv_ramp_epochs', 20))    # smooth ramp to *_end
+
+        # live (epoch-dependent) strengths
+        self._lambda_L = 0.0
+        self._lambda_E = 0.0
+
         self.num_envs = int(mcfg.get('num_envs', 3))
         self.ib_beta_mask = float(mcfg.get('ib_beta_mask', 0.001))   # 0 disables
         # semantic EA/LA
@@ -103,6 +116,11 @@ class Experts(nn.Module):
         # VIB
         self.vib_mu = nn.Linear(hidden_dim, hidden_dim)
         self.vib_logvar = nn.Linear(hidden_dim, hidden_dim)
+        self.beta_ib_end = float(mcfg.get('beta_ib_end', 1e-3))     # per-dim if you sum over dims
+        self.ib_warmup_epochs = int(mcfg.get('ib_warmup_epochs', 5))
+        self.ib_ramp_epochs   = int(mcfg.get('ib_ramp_epochs', 20))
+        self.ib_free_bits     = float(mcfg.get('ib_free_bits', 0.5))  # nats per sample
+        self._beta_ib = 0.0
 
 
         self.causal_encoder = GINEncoderWithEdgeWeight(num_features, hidden_dim, num_layers, dropout, train_eps=True)
@@ -149,6 +167,8 @@ class Experts(nn.Module):
         self.mask_temp_anneal_epochs = int(mcfg.get('mask_temp_anneal_epochs', 40))
         self.mask_temp_schedule = str(mcfg.get('mask_temp_schedule', 'exp'))
         self._mask_temp = self.mask_temp_start
+
+        
 
 
     def forward(self, data, target=None, embeddings_by_env=None, labels_by_env=None):
@@ -462,14 +482,11 @@ class Experts(nn.Module):
             nn.init.constant_(self.ib_logvar_head_sem.weight, 0.0)
             nn.init.constant_(self.ib_logvar_head_sem.bias, -5.0)  # exp(-5) ≈ 0.0067
 
-        mu = self.ib_mu_head_sem(h_masked)            # (B, H)
-        logvar = self.ib_logvar_head_sem(h_masked)    # (B, H)
-
-        # KL[q(z|h_C)||N(0,I)]  (mean over batch; sum over dims per sample)
-        kl_per = 0.5 * (mu.pow(2) + logvar.exp() - 1.0 - logvar).sum(dim=1)  # (B,)
-        kl = kl_per.mean()
-
-        loss = loss + ib_beta * kl
+        # kl_per_sample: [B] after summing over latent dims
+        kl_ps = (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum(dim=1)
+        # free-bits: only penalize above threshold
+        kl_ps = torch.clamp(kl_ps - self.ib_free_bits, min=0.0)
+        loss += self._beta_ib * kl_ps.mean()
         #print(f"IB loss:", loss)
 
 
@@ -494,30 +511,17 @@ class Experts(nn.Module):
         #     loss = loss + var_floor_weight * vf_penalty
 
         # ---- MI bits (opt-in) ----
-        if (lambda_e > 0.0) or (lambda_l > 0.0):
-            assert h_orig is not None, "h_orig required for MI-augmented semantic invariance"
+        # Use the scheduled strength so we get warm-up + ramp
+        lambda_l_eff = getattr(self, "_lambda_L", lambda_l)
+
+        if lambda_l_eff > 0.0:
+            assert h_orig is not None, "h_orig required for LA on residual"
             h_C = h_masked
             with torch.no_grad():
                 h_S = (h_orig.detach() - h_C).detach()
-
-            # Pseudo-envs from nuisance residuals (cheap & effective)
-            # with torch.no_grad():
-            #     # Normalize for clustering stability
-            #     r = F.normalize(h_S, p=2, dim=1)
-            #     pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
-
-            # # EA on h_C
-            # if lambda_e > 0.0:
-            #     logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
-            #     loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
-
-            # LA on h_S
-            if lambda_l > 0.0:
-                logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_S, lambda_l))
-                info_loss = F.cross_entropy(logits_y_spur, labels)
-                #print(f"Info loss:", info_loss)
-                loss = loss + lambda_l * info_loss
-
+            # LA on h_S (label-agnostic complement) with GRL
+            logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_S, lambda_l_eff))
+            loss = loss + lambda_l_eff * F.cross_entropy(logits_y_spur, labels)
 
         return loss
 
@@ -693,5 +697,25 @@ class Experts(nn.Module):
 
     def set_epoch(self, epoch: int):
         self.update_mask_temperature(epoch)
+        self.update_adv_lambdas(epoch)        # NEW: anneal LA/EA3
+        self.update_ib_beta(epoch)
 
 
+    def update_ib_beta(self, epoch: int):
+        if epoch < self.ib_warmup_epochs:
+            self._beta_ib = 0.0
+            return
+        r = min(1.0, (epoch - self.ib_warmup_epochs) / max(1, self.ib_ramp_epochs))
+        # linear; use exp if you prefer: self._beta_ib = self.beta_ib_end * ((self.beta_ib_end/max(1e-8,1e-8))**r)
+        self._beta_ib = self.beta_ib_end * r
+
+    def update_adv_lambdas(self, epoch: int):
+        # warm-up: adversaries off
+        if epoch < self.adv_warmup_epochs:
+            self._lambda_L = 0.0
+            self._lambda_E = 0.0
+            return
+        # ramp: linear (simple and stable); swap with exp if you prefer
+        r = min(1.0, (epoch - self.adv_warmup_epochs) / max(1, self.adv_ramp_epochs))
+        self._lambda_L = self.lambda_L_end * r
+        self._lambda_E = self.lambda_E_end * r
