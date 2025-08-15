@@ -654,6 +654,7 @@ class Experts(nn.Module):
 
         # Add unseen raw ids to mapping
         uniq = torch.unique(env_labels).tolist()
+        print(f"uniq: {uniq}")
         for raw in sorted(uniq):
             if raw not in self._env_label_map:
                 self._env_label_map[raw] = len(self._env_label_inv)
