@@ -430,7 +430,7 @@ class Experts(nn.Module):
         var_floor_weight: float = 0.0,
         lambda_e: float = 0.0,            # ignored (no env / kmeans)
         lambda_l: float = 0.0,            # label-adversary weight on residual (Gs ⟂ Y)
-        ib_beta: float = 2e-3             # KL weight ~ compression strength (I(h_C;G))
+        ib_beta: float = 0.5             # KL weight ~ compression strength (I(h_C;G))
     ) -> torch.Tensor:
         """
         Original: prototype pull.
@@ -462,7 +462,7 @@ class Experts(nn.Module):
         kl = kl_per.mean()
 
         loss = loss + ib_beta * kl
-        print(f"IB loss:", loss)
+        #print(f"IB loss:", loss)
 
 
         # for c in unique:
@@ -507,7 +507,7 @@ class Experts(nn.Module):
             if lambda_l > 0.0:
                 logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_S, lambda_l))
                 info_loss = F.cross_entropy(logits_y_spur, labels)
-                print(f"Info loss:", info_loss)
+                #print(f"Info loss:", info_loss)
                 loss = loss + lambda_l * info_loss
 
 
