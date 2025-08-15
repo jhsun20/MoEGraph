@@ -430,7 +430,7 @@ class Experts(nn.Module):
         var_floor_weight: float = 0.0,
         lambda_e: float = 0.0,            # ignored (no env / kmeans)
         lambda_l: float = 0.0,            # label-adversary weight on residual (Gs ⟂ Y)
-        ib_beta: float = 0.5             # KL weight ~ compression strength (I(h_C;G))
+        ib_beta: float = 0.001             # KL weight ~ compression strength (I(h_C;G))
     ) -> torch.Tensor:
         """
         Original: prototype pull.
