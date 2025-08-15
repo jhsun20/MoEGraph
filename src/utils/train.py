@@ -87,15 +87,11 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     model.train()
     scaler = GradScaler()
 
-    total_loss = 0
-    total_ce_loss = 0
-    total_reg_loss = 0
-    total_sem_loss = 0
-    total_str_loss = 0
-    total_div_loss = 0
-    total_load_loss = 0
+    total_loss = total_ce_loss = total_reg_loss = 0
+    total_sem_loss = total_str_loss = total_div_loss = total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
+
     if config['model']['parallel']:
         verbose = model.module.verbose
         model.module.set_epoch(epoch)
@@ -103,21 +99,19 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         verbose = model.verbose
         model.set_epoch(epoch)
 
-    # Track expert usage
     gate_weight_accumulator = []
 
     pbar = tqdm(loader, desc='Training MoEUIL', leave=False)
     for data in pbar:
         if config['model']['parallel']:
             data = data.to_data_list()
-            data = [d.to(torch.device('cuda')) for d in data]  # or device_ids[0]
+            data = [d.to(torch.device('cuda')) for d in data]
             print("batch is a list")
         else:
             data = data.to(device)
 
         optimizer.zero_grad()
 
-        # Step 3: Forward through MoE
         with autocast():
             aggregated_outputs = model(data)
             loss = aggregated_outputs['loss_total']
@@ -128,19 +122,10 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
 
         batch_size = data.y.size(0)
 
-        # Step 4: Gate schedule
-        gate_weights = aggregated_outputs['gate_weights']  # (K, B, 1)
-        gate_weights = gate_weights.squeeze(-1).T          # → (B, K)
-        gate_weight_accumulator.append(gate_weights.cpu()) # accumulate across batches
+        # --- FIX: gate_weights is already (B, K); do NOT squeeze/transpose ---
+        gate_weights = aggregated_outputs['gate_weights']  # (B, K)
+        gate_weight_accumulator.append(gate_weights.cpu())
 
-        # Check gradient flow to gate
-        # for name, param in model.gate.named_parameters():
-        #     if param.grad is not None:
-        #         print(f"Param {name} grad norm: {param.grad.norm().item():.4f}")
-        #     else:
-        #         print(f"Param {name} has no gradient!")
-
-        # Logging
         total_loss += loss.item() * batch_size
         total_ce_loss += aggregated_outputs['loss_ce'].item() * batch_size
         total_reg_loss += aggregated_outputs['loss_reg'].item() * batch_size
@@ -151,8 +136,10 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
 
-    gate_weights_all = torch.cat(gate_weight_accumulator, dim=0)  # (N, num_experts)
+    # shapes now consistent: concat along batch dimension
+    gate_weights_all = torch.cat(gate_weight_accumulator, dim=0)  # (N, K)
     load_balance = gate_weights_all.mean(dim=0)
+
     if not config.get("experiment", {}).get("hyper_search", {}).get("enable", False):
         print("\nGate Load per Expert:")
         for i, v in enumerate(load_balance):
@@ -169,26 +156,22 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
-    
-    # --- Print per-expert actual mask drop rates (last batch) ---
+
+    # --- FIX: use last batch’s Data to get batch indices for stats (no cached_masks) ---
     nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
     em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
     fm = aggregated_outputs.get('feat_masks', None)    # (N, K, D)
-    node_batch = aggregated_outputs.get('cached_masks', None).get('batch', None)  # (N,)
-    edge_batch = aggregated_outputs.get('cached_masks', None).get('edge_batch', None)  # (E,)
+
+    node_batch = getattr(data, 'batch', None)
+    edge_batch = data.batch[data.edge_index[0]] if node_batch is not None else None
 
     def _per_expert_drop_stats_per_graph(mask, batch_idx, is_feat=False):
         if mask is None or batch_idx is None:
             return None, None
         x = mask.float()
-        if is_feat:
-            x = x.mean(dim=2)      # (N, K, D) -> (N, K)
-        else:
-            x = x.squeeze(-1)      # (N_or_E, K, 1) -> (N_or_E, K)
-
+        x = x.mean(dim=2) if is_feat else x.squeeze(-1)  # -> (N_or_E, K)
         num_graphs = int(batch_idx.max().item()) + 1
-        drop_mean = []
-        drop_std = []
+        drop_mean, drop_std = [], []
         for k in range(x.size(1)):
             keep_sum = torch.zeros(num_graphs, device=x.device)
             count_sum = torch.zeros(num_graphs, device=x.device)
@@ -196,8 +179,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
             count_sum.scatter_add_(0, batch_idx, torch.ones_like(x[:, k]))
             keep_pg = keep_sum / (count_sum + 1e-8)
             drop_pg = 1.0 - keep_pg
-            drop_mean.append(drop_pg.mean())
-            drop_std.append(drop_pg.std(unbiased=False))
+            drop_mean.append(drop_pg.mean()); drop_std.append(drop_pg.std(unbiased=False))
         return torch.stack(drop_mean), torch.stack(drop_std)
 
     if nm is not None and em is not None and fm is not None and node_batch is not None and edge_batch is not None:
@@ -215,28 +197,20 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     else:
         print("\n[Warn] Mask tensors or batch indices not found; skip per-graph mask stats.")
 
-    gc.collect()
-    torch.cuda.empty_cache()
-
+    gc.collect(); torch.cuda.empty_cache()
     return metrics
 
 
 def evaluate_moe(model, loader, device, metric_type, epoch, config):
-    """Evaluate MoE model on validation or test set."""
     model.eval()
-    total_loss = 0
-    total_ce_loss = 0
-    total_reg_loss = 0
-    total_sem_loss = 0
-    total_str_loss = 0
-    total_div_loss = 0
-    total_load_loss = 0
+    total_loss = total_ce_loss = total_reg_loss = 0
+    total_sem_loss = total_str_loss = total_div_loss = total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
-    all_top1_outputs = []
-    all_top2_outputs = []
-    # Track expert usage
+    all_top1_outputs, all_top2_outputs = [], []
+
     gate_weight_accumulator = []
+
     if config['model']['parallel']:
         verbose = model.module.verbose
         model.module.set_epoch(epoch)
@@ -247,26 +221,23 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     pbar = tqdm(loader, desc='Evaluating MoEUIL', leave=False)
     for data in pbar:
         data = data.to(device)
-
-        # Step 3: Forward through MoE
         with autocast():
             aggregated_outputs = model(data)
+
         batch_size = data.y.size(0)
 
-        # Step 4: Gate schedule
-        gate_weights = aggregated_outputs['gate_weights']
-        gate_weights = gate_weights.squeeze(-1).T          # → (B, K)
+        # --- FIX: gate_weights is (B, K); no squeeze/transpose ---
+        gate_weights = aggregated_outputs['gate_weights']  # (B, K)
         gate_weight_accumulator.append(gate_weights.cpu())
 
-        
         expert_logits = aggregated_outputs['expert_logits']  # (B, K, C)
 
-        # --- Compute Top-1 ---
+        # --- Top-1 over experts (correct dim=1) ---
         top1_idx = torch.argmax(gate_weights, dim=1)  # (B,)
         top1_logits = expert_logits[torch.arange(batch_size, device=expert_logits.device), top1_idx, :]
         all_top1_outputs.append(top1_logits.detach())
 
-        # --- Compute Top-2 ---
+        # --- Top-2 mixture (still over dim=1=experts) ---
         k2 = min(2, gate_weights.size(1))
         top2_vals, top2_idx = torch.topk(gate_weights, k=k2, dim=1)  # (B, k2)
         gather_idx = top2_idx.unsqueeze(-1).expand(-1, -1, expert_logits.size(-1))
@@ -274,8 +245,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         w2 = top2_vals / (top2_vals.sum(dim=1, keepdim=True) + 1e-12)
         top2_logits = (selected_logits * w2.unsqueeze(-1)).sum(dim=1)
         all_top2_outputs.append(top2_logits.detach())
-        
-        # Logging
+
         total_loss += aggregated_outputs['loss_total'].item() * batch_size
         total_ce_loss += aggregated_outputs['loss_ce'].item() * batch_size
         total_reg_loss += aggregated_outputs['loss_reg'].item() * batch_size
@@ -286,10 +256,9 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
 
-    gate_weights_all = torch.cat(gate_weight_accumulator, dim=0)  # (N, num_experts)
+    gate_weights_all = torch.cat(gate_weight_accumulator, dim=0)  # (N, K)
     load_balance = gate_weights_all.mean(dim=0)
-    
-    # Always print gate load information
+
     if not config.get("experiment", {}).get("hyper_search", {}).get("enable", False):
         print("\nGate Load per Expert:")
         for i, v in enumerate(load_balance):
@@ -299,31 +268,6 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     final_targets = torch.cat(all_targets, dim=0)
     metrics = compute_metrics(final_outputs, final_targets, metric_type)
 
-    # # Top-1 and Top-2 metrics
-    # final_top1 = torch.cat(all_top1_outputs, dim=0)
-    # final_top2 = torch.cat(all_top2_outputs, dim=0)
-    # metrics_top1 = compute_metrics(final_top1, final_targets, metric_type)
-    # metrics_top2 = compute_metrics(final_top2, final_targets, metric_type)
-
-    # # Add them to metrics dict and print
-    # for k, v in metrics_top1.items():
-    #     metrics[f"top1_{k}"] = v
-    # for k, v in metrics_top2.items():
-    #     metrics[f"top2_{k}"] = v
-
-    # print("\n--- Top-K Expert Metrics ---")
-    # for k, v in metrics_top1.items():
-    #     if isinstance(v, (float, int)):
-    #         print(f"Top-1 {k}: {v:.4f}")
-    #     else:
-    #         print(f"Top-1 {k}: {v}")
-    # for k, v in metrics_top2.items():
-    #     if isinstance(v, (float, int)):
-    #         print(f"Top-2 {k}: {v:.4f}")
-    #     else:
-    #         print(f"Top-2 {k}: {v}")
-        
-    # Always include all losses in metrics
     metrics['loss'] = total_loss / len(loader.dataset)
     metrics['loss_ce'] = total_ce_loss / len(loader.dataset)
     metrics['loss_reg'] = total_reg_loss / len(loader.dataset)
@@ -333,25 +277,21 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
 
-    # --- Print per-expert actual mask drop rates (last batch) ---
+    # --- FIX: last-batch mask stats via data.batch / edge_index ---
     nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
     em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
     fm = aggregated_outputs.get('feat_masks', None)    # (N, K, D)
-    node_batch = aggregated_outputs.get('cached_masks', None).get('batch', None)  # (N,)
-    edge_batch = aggregated_outputs.get('cached_masks', None).get('edge_batch', None)  # (E,)
+
+    node_batch = getattr(data, 'batch', None)
+    edge_batch = data.batch[data.edge_index[0]] if node_batch is not None else None
 
     def _per_expert_drop_stats_per_graph(mask, batch_idx, is_feat=False):
         if mask is None or batch_idx is None:
             return None, None
         x = mask.float()
-        if is_feat:
-            x = x.mean(dim=2)      # (N, K, D) -> (N, K)
-        else:
-            x = x.squeeze(-1)      # (N_or_E, K, 1) -> (N_or_E, K)
-
+        x = x.mean(dim=2) if is_feat else x.squeeze(-1)
         num_graphs = int(batch_idx.max().item()) + 1
-        drop_mean = []
-        drop_std = []
+        drop_mean, drop_std = [], []
         for k in range(x.size(1)):
             keep_sum = torch.zeros(num_graphs, device=x.device)
             count_sum = torch.zeros(num_graphs, device=x.device)
@@ -359,8 +299,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
             count_sum.scatter_add_(0, batch_idx, torch.ones_like(x[:, k]))
             keep_pg = keep_sum / (count_sum + 1e-8)
             drop_pg = 1.0 - keep_pg
-            drop_mean.append(drop_pg.mean())
-            drop_std.append(drop_pg.std(unbiased=False))
+            drop_mean.append(drop_pg.mean()); drop_std.append(drop_pg.std(unbiased=False))
         return torch.stack(drop_mean), torch.stack(drop_std)
 
     if nm is not None and em is not None and fm is not None and node_batch is not None and edge_batch is not None:
@@ -378,9 +317,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     else:
         print("\n[Warn] Mask tensors or batch indices not found; skip per-graph mask stats.")
 
-    gc.collect()
-    torch.cuda.empty_cache()
-
+    gc.collect(); torch.cuda.empty_cache()
     return metrics
 
 
