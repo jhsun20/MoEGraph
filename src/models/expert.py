@@ -332,7 +332,7 @@ class Experts(nn.Module):
         y_hard = (y_soft > 0.5).float()
         return y_hard + (y_soft - y_soft.detach())
 
-    def compute_classification_loss(self, pred, target, use_weights=False):
+    def compute_classification_loss(self, pred, target, use_weights=True):
         if use_weights:
             num_classes = pred.size(1)
             class_counts = torch.bincount(target, minlength=num_classes).float()
