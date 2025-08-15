@@ -480,15 +480,9 @@ class Experts(nn.Module):
         # --- LA on complement embedding ---
         if h_spur is None:
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
-        if not hasattr(self, 'lbl_head_spur_sem') or self.lbl_head_spur_sem is None:
-            Hs = h_spur.size(1)
-            hidden = max(64, min(256, Hs))
-            self.lbl_head_spur_sem = nn.Sequential(
-                nn.Linear(Hs, hidden), nn.ReLU(),
-                nn.Linear(hidden, self.num_classes)
-            ).to(h_spur.device)
-        logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_spur, self._lambda_L))
-        la = F.cross_entropy(logits_y_spur, labels)
+        if self._lambda_L > 0.:
+            logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_spur, self._lambda_L))
+            la = F.cross_entropy(logits_y_spur, labels)
 
 
         # --- EA on h_ea (environment adversary on G_C) ---
