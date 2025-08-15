@@ -97,8 +97,8 @@ class Experts(nn.Module):
         mcfg = config.get('model', {})
         self.num_envs = int(mcfg.get('num_envs', 3))
         # semantic EA/LA
-        self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 0.4))
-        self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 0.4))
+        self.mi_lambda_e_sem = float(mcfg.get('mi_lambda_e_sem', 0.3))
+        self.mi_lambda_l_sem = float(mcfg.get('mi_lambda_l_sem', 0.3))
         # structural EA/LA
         self.mi_mu_e_str = float(mcfg.get('mi_mu_e_str', 0.1))
         self.mi_mu_l_str = float(mcfg.get('mi_mu_l_str', 0.1))
@@ -462,7 +462,7 @@ class Experts(nn.Module):
         kl = kl_per.mean()
 
         loss = loss + ib_beta * kl
-        #print(f"IB loss:", loss)
+        print(f"IB loss:", loss)
 
 
         # for c in unique:
@@ -493,20 +493,23 @@ class Experts(nn.Module):
                 h_S = (h_orig.detach() - h_C).detach()
 
             # Pseudo-envs from nuisance residuals (cheap & effective)
-            with torch.no_grad():
-                # Normalize for clustering stability
-                r = F.normalize(h_S, p=2, dim=1)
-                pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
+            # with torch.no_grad():
+            #     # Normalize for clustering stability
+            #     r = F.normalize(h_S, p=2, dim=1)
+            #     pseudo_env = kmeans_torch(r, K=self.num_envs, iters=10)  # (B,)
 
-            # EA on h_C
-            if lambda_e > 0.0:
-                logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
-                loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
+            # # EA on h_C
+            # if lambda_e > 0.0:
+            #     logits_e = self.env_head_sem(grad_reverse(h_C, lambda_e))
+            #     loss = loss + lambda_e * F.cross_entropy(logits_e, pseudo_env)
 
             # LA on h_S
             if lambda_l > 0.0:
                 logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_S, lambda_l))
-                loss = loss + lambda_l * F.cross_entropy(logits_y_spur, labels)
+                info_loss = F.cross_entropy(logits_y_spur, labels)
+                print(f"Info loss:", info_loss)
+                loss = loss + lambda_l * info_loss
+
 
         return loss
 
