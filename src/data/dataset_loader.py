@@ -146,6 +146,7 @@ def load_dataset(config):
         print(f"Features: {meta_info.dim_node}, Classes: {meta_info.num_classes}")
         print(f"Samples - Train: {len(datasets['train'])}, Val: {len(datasets['val'])}, ID Val: {len(datasets['id_val'])}, Test: {len(datasets['test'])}, ID Test: {len(datasets['id_test'])}")
         print(f"Evaluation metric: {datasets['metric']}")
+        print(f"Number of environments: {meta_info.num_envs}")
         print(f"===============================\n")
     
     return {

@@ -29,6 +29,10 @@ class MoE(nn.Module):
         self.weight_str      = config['model']['weight_str']
         self.weight_div      = config['model']['weight_div']
         self.weight_load     = config['model']['weight_load']
+        self.topk_train_k    = int(config['gate'].get('topk_train_k', 2))    # 0 => disabled
+        self.topk_after      = int(config['gate'].get('topk_after', self.train_after + 1))
+
+
 
         # Shared expert block (contains all experts)
         self.shared = Experts(config, dataset_info)
@@ -80,17 +84,6 @@ class MoE(nn.Module):
                 gate_probs = entmax_bisect(gate_scores, alpha=self.entmax_alpha, dim=-1)
             else:
                 gate_probs = F.softmax(gate_scores, dim=-1)
-            # NEW: entropy-coupled blend with uniform when experts are uncertain
-            #      p' = (1-λ) p + λ * U ,  where λ = clip(a*u, 0, λ_max)
-            a        = getattr(self, 'unc_blend_strength',    getattr(self, 'unc_blend_strength', None))
-            lam_max  = getattr(self, 'unc_blend_lambda_max',  getattr(self, 'unc_blend_lambda_max', None))
-            # fallbacks if not in config:
-            if a is None:       a = self.__dict__.get('unc_blend_strength', 1.0)
-            if lam_max is None: lam_max = self.__dict__.get('unc_blend_lambda_max', 0.5)
-
-            lam = (a * u).clamp_(0.0, lam_max)                           # (B,)
-            uniform = torch.full_like(gate_probs, 1.0 / self.num_experts)
-            gate_probs = (1.0 - lam.unsqueeze(-1)) * gate_probs + lam.unsqueeze(-1) * uniform
 
         if self.verbose:
             with torch.no_grad():
