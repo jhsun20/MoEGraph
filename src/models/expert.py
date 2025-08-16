@@ -177,7 +177,7 @@ class Experts(nn.Module):
         self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
         self.rho_feat = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
 
-        print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
+        # print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
 
     # ----------------- Public API -----------------
     def set_epoch(self, epoch: int):
