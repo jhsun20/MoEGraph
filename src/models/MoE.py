@@ -171,7 +171,7 @@ class MoE(nn.Module):
         return loss
 
     @staticmethod
-    def _load_balance(self, gate_probs, lam=0.1, eps=1e-8):
+    def _load_balance(gate_probs, lam=0.1, eps=1e-8):
         # gate_probs: (B,K)
         B, K = gate_probs.shape
         p_bar = gate_probs.mean(0)                                # (K,)
