@@ -171,15 +171,11 @@ class MoE(nn.Module):
         return loss
 
     @staticmethod
-    def _load_balance(gate_probs, eps: float = 1e-8):
-        """
-        Encourage balanced expert usage: minimize entropy gap from uniform.
-        """
-        # Per-batch average usage
-        p = gate_probs.mean(dim=0)         # (K,)
-        K = p.numel()
-        if K <= 1:
-            return p.new_tensor(0.0)
-        # KL(p || uniform)
-        uniform = p.new_full((K,), 1.0 / K)
-        return F.kl_div((p + eps).log(), uniform, reduction='batchmean')
+    def _load_balance(self, gate_probs, lam=0.1, eps=1e-8):
+        # gate_probs: (B,K)
+        B, K = gate_probs.shape
+        p_bar = gate_probs.mean(0)                                # (K,)
+        H_marg = -(p_bar * (p_bar + eps).log()).sum()
+        H_rows = -(gate_probs * (gate_probs + eps).log()).sum(dim=1).mean()
+        return -H_marg + lam * H_rows
+

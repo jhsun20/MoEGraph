@@ -418,7 +418,7 @@ class Experts(nn.Module):
         # ---- local hyperparameters (no config dependency) ----
         # weights of each component
         w_corr = 1.0
-        w_uo   = 0.50     # multiplies (coverage + overlap) per modality before averaging
+        w_uo   = 0.0     # multiplies (coverage + overlap) per modality before averaging
 
         # correlation hinge threshold (lower => stricter decorrelation)
         tau_corr = 0.10
