@@ -32,8 +32,6 @@ class MoE(nn.Module):
         self.topk_train_k    = int(config['gate'].get('topk_train_k', 2))    # 0 => disabled
         self.topk_after      = int(config['gate'].get('topk_after', self.train_after + 1))
 
-
-
         # Shared expert block (contains all experts)
         self.shared = Experts(config, dataset_info)
 
@@ -84,6 +82,15 @@ class MoE(nn.Module):
                 gate_probs = entmax_bisect(gate_scores, alpha=self.entmax_alpha, dim=-1)
             else:
                 gate_probs = F.softmax(gate_scores, dim=-1)
+            # --- in MoE.forward, right after gate_probs is computed (and blended) ---
+            if (self.current_epoch >= self.topk_after) and (self.topk_train_k and self.topk_train_k < self.num_experts):
+                # hard per-sample top-k mask
+                topk_vals, topk_idx = gate_probs.topk(self.topk_train_k, dim=1)       # (B, k)
+                mask = torch.zeros_like(gate_probs)                                    # (B, K)
+                mask.scatter_(1, topk_idx, 1.0)
+                gate_probs = gate_probs * mask
+                denom = gate_probs.sum(dim=1, keepdim=True).clamp_min(1e-8)
+                gate_probs = gate_probs / denom
 
         if self.verbose:
             with torch.no_grad():
