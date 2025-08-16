@@ -94,9 +94,9 @@ class Experts(nn.Module):
 
         # Structural invariance (live) weight schedule (even while str_loss=0.0 for now)
         self.weight_str_end       = float(mcfg.get('weight_str_end', self.weight_str))
-        self.strinv_warmup_epochs = int(mcfg.get('strinv_warmup_epochs', 0))
-        self.strinv_ramp_epochs   = int(mcfg.get('strinv_ramp_epochs', 1))
-        self._weight_str_live     = self.weight_str
+        self.strinv_warmup_epochs = int(mcfg.get('strinv_warmup_epochs', 5))
+        self.strinv_ramp_epochs   = int(mcfg.get('strinv_ramp_epochs', 5))
+        self._weight_str_live     = 0.0
         self.consistency_T = float(mcfg.get('consistency_T', 2.0))
 
         # --- Node-add augmentation controls (consistency branch only) ---
