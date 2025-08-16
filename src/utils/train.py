@@ -438,7 +438,7 @@ def train(config, trial=None):
             # Build optimizer with param groups
             optimizer = torch.optim.Adam([
                 {"params": experts_params, "lr": config['training']['lr'], "weight_decay": config['training']['weight_decay'], "name": "experts"},
-                {"params": gate_params,    "lr": config['training']['lr'] * 0.01, "weight_decay": 0.0, "name": "gate"},
+                {"params": gate_params,    "lr": config['training']['lr'] * 0.1, "weight_decay": config['training']['weight_decay'], "name": "gate"},
             ])
 
 
