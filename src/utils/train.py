@@ -421,6 +421,9 @@ def train(config, trial=None):
             model = DataParallel(model)
         model = model.to(device)
 
+
+
+
         if config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil':
             optimizer = torch.optim.Adam(
                 model.parameters(),
@@ -428,14 +431,16 @@ def train(config, trial=None):
                 weight_decay=config['training']['weight_decay']
             )
         else:
-            meta_learner = None
-            augmentor = None
+            # Separate params
+            experts_params = list(model.shared.parameters())                   # all experts (encoders, heads, masks, etc.)
+            gate_params    = list(model.gate_enc.parameters()) + list(model.gate_mlp.parameters())  # gate encoder + MLP
             # Initialize optimizer
-            optimizer = torch.optim.Adam(
-                model.parameters(),
-                lr=config['training']['lr'],
-                weight_decay=config['training']['weight_decay']
-            )
+            # Build optimizer with param groups
+            optimizer = torch.optim.Adam([
+                {"params": experts_params, "lr": config['training']['lr'], "weight_decay": config['training']['weight_decay'], "name": "experts"},
+                {"params": gate_params,    "lr": config['training']['lr'] * 0.01, "weight_decay": 0.0, "name": "gate"},
+            ])
+
 
         
         # Training loop
