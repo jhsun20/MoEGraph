@@ -69,4 +69,4 @@ gate:
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 50
+  train_after: 10

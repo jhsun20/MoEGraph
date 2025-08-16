@@ -60,6 +60,16 @@ class MoE(nn.Module):
 
         # Gate on RAW graph (no expert info)
         gate_scores = self._gate_logits_raw(data)  # (B, K)
+        # NEW: compute per-sample expert uncertainty u \in [0,1]
+#      u = mean_k H(p_k) / log(C), where p_k are per-expert class probs
+        expert_logits = shared_out['expert_logits']        # (B,K,C)
+        B, K, C = expert_logits.shape
+        with torch.no_grad():
+            per_expert_log_probs = expert_logits.log_softmax(dim=-1)        # (B,K,C)
+            per_expert_probs     = per_expert_log_probs.exp()
+            per_expert_entropy   = -(per_expert_probs * per_expert_log_probs).sum(dim=-1)   # (B,K)
+            u = per_expert_entropy.mean(dim=1) / (torch.log(torch.tensor(float(C), device=expert_logits.device)))  # (B,)
+
 
         if self.current_epoch < self.train_after:
             # Freeze gate to uniform early on
@@ -69,6 +79,17 @@ class MoE(nn.Module):
                 gate_probs = entmax_bisect(gate_scores, alpha=self.entmax_alpha, dim=-1)
             else:
                 gate_probs = F.softmax(gate_scores, dim=-1)
+            # NEW: entropy-coupled blend with uniform when experts are uncertain
+            #      p' = (1-λ) p + λ * U ,  where λ = clip(a*u, 0, λ_max)
+            a        = getattr(self, 'unc_blend_strength',    getattr(self, 'unc_blend_strength', None))
+            lam_max  = getattr(self, 'unc_blend_lambda_max',  getattr(self, 'unc_blend_lambda_max', None))
+            # fallbacks if not in config:
+            if a is None:       a = self.__dict__.get('unc_blend_strength', 1.0)
+            if lam_max is None: lam_max = self.__dict__.get('unc_blend_lambda_max', 0.5)
+
+            lam = (a * u).clamp_(0.0, lam_max)                           # (B,)
+            uniform = torch.full_like(gate_probs, 1.0 / self.num_experts)
+            gate_probs = (1.0 - lam.unsqueeze(-1)) * gate_probs + lam.unsqueeze(-1) * uniform
 
         if self.verbose:
             with torch.no_grad():
