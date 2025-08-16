@@ -88,7 +88,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     scaler = GradScaler()
 
     total_loss = total_ce_loss = total_reg_loss = 0
-    total_sem_loss = total_str_loss = total_div_loss = total_load_loss = 0
+    total_la_loss = total_ea_loss = total_str_loss = total_div_loss = total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
 
@@ -129,7 +129,8 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         total_loss += loss.item() * batch_size
         total_ce_loss += aggregated_outputs['loss_ce'].item() * batch_size
         total_reg_loss += aggregated_outputs['loss_reg'].item() * batch_size
-        total_sem_loss += aggregated_outputs['loss_sem'].item() * batch_size
+        total_la_loss += aggregated_outputs['loss_la'].item() * batch_size    
+        total_ea_loss += aggregated_outputs['loss_ea'].item() * batch_size    
         total_str_loss += aggregated_outputs['loss_str'].item() * batch_size
         total_div_loss += aggregated_outputs['loss_div'].item() * batch_size
         total_load_loss += aggregated_outputs['loss_load'].item() * batch_size
@@ -163,7 +164,8 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     metrics['loss'] = total_loss / len(loader.dataset)
     metrics['loss_ce'] = total_ce_loss / len(loader.dataset)
     metrics['loss_reg'] = total_reg_loss / len(loader.dataset)
-    metrics['loss_sem'] = total_sem_loss / len(loader.dataset)
+    metrics['loss_la'] = total_la_loss / len(loader.dataset)
+    metrics['loss_ea'] = total_ea_loss / len(loader.dataset)
     metrics['loss_str'] = total_str_loss / len(loader.dataset)
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
@@ -216,7 +218,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
 def evaluate_moe(model, loader, device, metric_type, epoch, config):
     model.eval()
     total_loss = total_ce_loss = total_reg_loss = 0
-    total_sem_loss = total_str_loss = total_div_loss = total_load_loss = 0
+    total_la_loss = total_ea_loss = total_str_loss = total_div_loss = total_load_loss = 0
     all_targets = []
     all_aggregated_outputs = []
     all_mv_counts = []  # majority-vote "logits" = per-class vote counts (with tiny tie-breaker)
@@ -257,7 +259,8 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         total_loss += aggregated_outputs['loss_total'].item() * batch_size
         total_ce_loss += aggregated_outputs['loss_ce'].item() * batch_size
         total_reg_loss += aggregated_outputs['loss_reg'].item() * batch_size
-        total_sem_loss += aggregated_outputs['loss_sem'].item() * batch_size
+        total_la_loss += aggregated_outputs['loss_la'].item() * batch_size
+        total_ea_loss += aggregated_outputs['loss_ea'].item() * batch_size
         total_str_loss += aggregated_outputs['loss_str'].item() * batch_size
         total_div_loss += aggregated_outputs['loss_div'].item() * batch_size
         total_load_loss += aggregated_outputs['loss_load'].item() * batch_size
@@ -298,7 +301,8 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     metrics['loss'] = total_loss / len(loader.dataset)
     metrics['loss_ce'] = total_ce_loss / len(loader.dataset)
     metrics['loss_reg'] = total_reg_loss / len(loader.dataset)
-    metrics['loss_sem'] = total_sem_loss / len(loader.dataset)
+    metrics['loss_la'] = total_la_loss / len(loader.dataset)
+    metrics['loss_ea'] = total_ea_loss / len(loader.dataset)
     metrics['loss_str'] = total_str_loss / len(loader.dataset)
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_load'] = total_load_loss / len(loader.dataset)

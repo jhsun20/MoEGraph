@@ -64,7 +64,9 @@ class Experts(nn.Module):
         # ---------- Static/base loss weights from config ----------
         self.weight_ce  = float(mcfg['weight_ce'])
         self.weight_reg = float(mcfg['weight_reg'])
-        self.weight_sem = float(mcfg['weight_sem'])
+        self.weight_la = float(mcfg['weight_la'])
+        self.weight_ea = float(mcfg['weight_ea'])
+        self.weight_div = float(mcfg['weight_div'])
         self.weight_str = float(mcfg['weight_str'])  # baseline/static value; live value is scheduled below
 
         # ---------- Schedulers (mask temp, LA ramp, IB ramp, STR ramp) ----------
@@ -304,7 +306,7 @@ class Experts(nn.Module):
         }
 
         if target is not None:
-            ce_list, reg_list, sem_list, str_list, tot_list = [], [], [], [], []
+            ce_list, reg_list, str_list, tot_list, la_list, ea_list = [], [], [], [], [], []
 
             for k in range(self.num_experts):
                 logits_k = expert_logits[:, k, :]
@@ -332,18 +334,25 @@ class Experts(nn.Module):
                         symmetrize=False,              # set True if you want undirected EW averaging
                     )
 
-                    sem = self._semantic_invariance_loss(
+                    ea = self._causal_loss(
+                        h_masked=hC_k,
+                        h_ea=h_ea_list[:, k, :],
+                        expert_idx=k,
+                        env_labels=env_labels,
+                    )
+
+                    la = self._spur_loss(
                         h_masked=hC_k,
                         labels=target,
-                        h_orig=h_orig,
-                        h_ea=h_ea_list[:, k, :],
-                        h_spur=h_spur,
-                        expert_idx=k,
-                        env_labels=env_labels,   # <-- pass env ids directly
+                        h_spur=h_spur
                     )
+
                 else:
-                    sem = hC_k.new_tensor(0.0)
-                sem_list.append(sem)
+                    la = hC_k.new_tensor(0.0)
+                    ea = hC_k.new_tensor(0.0)
+
+                la_list.append(la)
+                ea_list.append(ea)
 
                 # Structural invariance currently OFF (keep explicit zero)
                 str_loss = hC_k.new_tensor(0.0)
@@ -353,18 +362,20 @@ class Experts(nn.Module):
                 total = (self.weight_ce * ce +
                          self.weight_reg * reg +
                          self._weight_str_live * str_loss +
-                         self.weight_sem * sem)
+                         self.weight_la * la +
+                         self.weight_ea * ea)
                 tot_list.append(total)
 
             # Diversity across experts' masks
-            div_loss = self._diversity_loss(node_masks, edge_masks, feat_masks,
+            div_loss = self.weight_div * self._diversity_loss(node_masks, edge_masks, feat_masks,
                                             node_batch=batch, edge_batch=batch[edge_index[0]])
 
             out.update({
                 'loss_total_list': torch.stack(tot_list),   # (K,)
                 'loss_ce_list':    torch.stack(ce_list),
                 'loss_reg_list':   torch.stack(reg_list),
-                'loss_sem_list':   torch.stack(sem_list),
+                'loss_la_list':   torch.stack(la_list),
+                'loss_ea_list':   torch.stack(ea_list),
                 'loss_str_list':   torch.stack(str_list),
                 'loss_div':        div_loss,
             })
@@ -542,20 +553,60 @@ class Experts(nn.Module):
                ((edge_keep_pg - rho_edge) ** 2).mean() + \
                ((feat_keep_pg - rho_feat) ** 2).mean()
 
-    def _semantic_invariance_loss(
+    def _causal_loss(
         self,
         h_masked: torch.Tensor,         # h_C (B, H)
-        labels: torch.Tensor,           # (B,)
-        h_orig: Optional[torch.Tensor] = None,
         h_ea:   Optional[torch.Tensor] = None,    # (B, Hea)
-        h_spur: Optional[torch.Tensor] = None,    # (B, H_spur)
         expert_idx: Optional[int] = None,
         env_labels: Optional[torch.Tensor] = None,
-        normalize: bool = False,
     ) -> torch.Tensor:
         """
         VIB on h_C + LA on residual h_S = (h_orig - h_C) to discourage label signal in spur part.
         """
+        device = h_masked.device
+        B, H = h_masked.shape
+
+        # ----- VIB (q(z|h_C)) -----
+        # if self.ib_mu_head_sem is None:
+        #     self.ib_mu_head_sem = nn.Linear(H, H).to(device)
+        #     self.ib_logvar_head_sem = nn.Linear(H, H).to(device)
+        #     nn.init.constant_(self.ib_logvar_head_sem.weight, 0.0)
+        #     nn.init.constant_(self.ib_logvar_head_sem.bias, -5.0)  # small var init
+
+        # mu     = self.ib_mu_head_sem(h_masked)
+        # logvar = self.ib_logvar_head_sem(h_masked)
+        # kl_ps  = (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum(dim=1)   # [B]
+        # kl_ps  = torch.clamp(kl_ps - self.ib_free_bits, min=0.0)
+        # vib = self._beta_ib * kl_ps.mean()
+
+        # --- EA on h_ea (environment adversary on G_C) ---
+        ea = h_masked.new_tensor(0.0)
+        if self._lambda_E > 0.0 and h_ea is not None and env_labels is not None:
+            # 1) sanitize env labels
+            env_tgt = env_labels.view(-1).long().to(h_ea.device)   # (B,)
+            # 2) sanity checks
+            if env_tgt.numel() != h_ea.size(0):
+                raise ValueError(f"env_labels shape {tuple(env_tgt.shape)} "
+                                f"must match batch size {h_ea.size(0)}")
+            if int(env_tgt.max()) >= self.num_envs or int(env_tgt.min()) < 0:
+                raise ValueError(f"env_labels must be in [0, {self.num_envs-1}] "
+                                f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
+            # 3) adversarial logits (GRL applies the reversed grad only to features)
+            h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
+            logits_E = self.ea_classifiers[expert_idx](h_ea_adv)   # (B, num_envs)
+            if logits_E.size(1) != self.num_envs:
+                raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
+            # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
+            ea = F.cross_entropy(logits_E, env_tgt)
+
+        return ea
+    
+    def _spur_loss(
+        self,
+        h_masked: torch.Tensor,         # h_C (B, H)
+        labels: torch.Tensor,           # (B,)
+        h_spur: Optional[torch.Tensor] = None,    # (B, H_spur)
+    ) -> torch.Tensor:
         device = h_masked.device
         B, H = h_masked.shape
 
@@ -580,28 +631,7 @@ class Experts(nn.Module):
             logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_spur, self._lambda_L))
             la = F.cross_entropy(logits_y_spur, labels)
 
-
-        # --- EA on h_ea (environment adversary on G_C) ---
-        ea = h_masked.new_tensor(0.0)
-        if self._lambda_E > 0.0 and h_ea is not None and env_labels is not None:
-            # 1) sanitize env labels
-            env_tgt = env_labels.view(-1).long().to(h_ea.device)   # (B,)
-            # 2) sanity checks
-            if env_tgt.numel() != h_ea.size(0):
-                raise ValueError(f"env_labels shape {tuple(env_tgt.shape)} "
-                                f"must match batch size {h_ea.size(0)}")
-            if int(env_tgt.max()) >= self.num_envs or int(env_tgt.min()) < 0:
-                raise ValueError(f"env_labels must be in [0, {self.num_envs-1}] "
-                                f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
-            # 3) adversarial logits (GRL applies the reversed grad only to features)
-            h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
-            logits_E = self.ea_classifiers[expert_idx](h_ea_adv)   # (B, num_envs)
-            if logits_E.size(1) != self.num_envs:
-                raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
-            # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
-            ea = F.cross_entropy(logits_E, env_tgt)
-
-        return la + ea
+        return la
     
     def _kmeans_labels(self, X: torch.Tensor, K: int, iters: int = 10) -> torch.Tensor:
         # X: (B, D)

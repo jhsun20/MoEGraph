@@ -24,7 +24,8 @@ class MoE(nn.Module):
         self.train_after     = config['gate']['train_after']
         self.weight_ce       = config['model']['weight_ce']
         self.weight_reg      = config['model']['weight_reg']
-        self.weight_sem      = config['model']['weight_sem']
+        self.weight_la      = config['model']['weight_la']
+        self.weight_ea      = config['model']['weight_ea']
         self.weight_str      = config['model']['weight_str']
         self.weight_div      = config['model']['weight_div']
         self.weight_load     = config['model']['weight_load']
@@ -126,7 +127,8 @@ class MoE(nn.Module):
         # Other per-expert losses (scalars) — combine via avg gate weights over batch
         avg_gate = gate_probs.mean(dim=0)  # (K,)
         reg = (avg_gate * shared_out['loss_reg_list']).sum()
-        sem = (avg_gate * shared_out['loss_sem_list']).sum()
+        la = (avg_gate * shared_out['loss_la_list']).sum()
+        ea = (avg_gate * shared_out['loss_ea_list']).sum()
         strl = (avg_gate * shared_out['loss_str_list']).sum()
 
         # Diversity (already scalar); Load-balance on gate (optional)
@@ -135,7 +137,8 @@ class MoE(nn.Module):
 
         total = (self.weight_ce * ce +
                  self.weight_reg * reg +
-                 self.weight_sem * sem +
+                 self.weight_la * la +
+                 self.weight_ea * ea +
                  self.weight_str * strl +
                  self.weight_div * div +
                  self.weight_load * load)
@@ -145,7 +148,8 @@ class MoE(nn.Module):
             'loss_total': total,
             'loss_ce': ce * self.weight_ce,
             'loss_reg': reg * self.weight_reg,
-            'loss_sem': sem * self.weight_sem,
+            'loss_la': la * self.weight_la,
+            'loss_ea': ea * self.weight_ea,
             'loss_str': strl * self.weight_str,
             'loss_div': div * self.weight_div,
             'loss_load': load * self.weight_load,
