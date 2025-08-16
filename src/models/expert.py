@@ -177,6 +177,8 @@ class Experts(nn.Module):
         self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
         self.rho_feat = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
 
+        print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
+
     # ----------------- Public API -----------------
     def set_epoch(self, epoch: int):
         """Update schedulers for mask temperature, LA lambda, VIB beta, and structural live weight."""
@@ -238,7 +240,6 @@ class Experts(nn.Module):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         # Use ground-truth environment ids if available
         env_labels = getattr(data, "env_id", None)
-        print(f"data.num_envs: {data.num_envs}")
 
         # Base embeddings used to produce masks
         Z = self.causal_encoder(x, edge_index, batch=batch)
