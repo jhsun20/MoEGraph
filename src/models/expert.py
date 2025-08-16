@@ -396,31 +396,124 @@ class Experts(nn.Module):
             return F.cross_entropy(pred, target, weight=w.to(pred.device))
         return F.cross_entropy(pred, target)
 
-    def _diversity_loss(self, node_masks, edge_masks, feat_masks, node_batch, edge_batch, tau=0.10, eps=1e-8):
+    def _diversity_loss(
+        self,
+        node_masks: torch.Tensor,   # [N_nodes, K, 1] or [N_nodes, K]
+        edge_masks: torch.Tensor,   # [N_edges, K, 1] or [N_edges, K]
+        feat_masks: torch.Tensor,   # [N_nodes, K, F] (per-feature) or [N_nodes, K, 1]
+        node_batch: torch.Tensor,   # [N_nodes] graph indices (0..B-1)
+        edge_batch: torch.Tensor,   # [N_edges] graph indices (0..B-1)
+    ):
         """
-        Per-graph correlation hinge on experts' masks (lower correlation => higher diversity).
+        Combines three complementary pieces:
+        1) correlation hinge (shape-level de-correlation across experts)
+        2) union/coverage (avoid "nobody selects anything")
+        3) overlap/exclusivity (avoid "everybody selects the same thing")
+
+        Hyperparameters are kept local with sensible defaults.
         """
+
+        # ---- local hyperparameters (no config dependency) ----
+        # weights of each component
+        w_corr = 1.0
+        w_uo   = 0.10     # multiplies (coverage + overlap) per modality before averaging
+
+        # correlation hinge threshold (lower => stricter decorrelation)
+        tau_corr = 0.10
+
+        # union/overlap targets: encourage U_i >= tau_cov and S_i <= tau_over
+        tau_cov  = 0.60   # require at least ~0.6 union coverage
+        tau_over = 1.20   # allow ≈1 expert on average (softly), >1.2 gets penalized
+
+        eps = 1e-8
+
+        # -------- helpers --------
+        def _maybe_squeeze(v: torch.Tensor) -> torch.Tensor:
+            # squeeze last dim if it's singleton
+            return v.squeeze(-1) if v.dim() >= 2 and v.size(-1) == 1 else v
+
         def _per_graph_abs_corr_hinge(V: torch.Tensor, bidx: torch.Tensor) -> torch.Tensor:
-            B = int(bidx.max().item()) + 1
+            """
+            V: [items, K] mask probabilities for one modality
+            For each graph, z-score over items, compute |corr| matrix across experts,
+            take off-diagonal mean, hinge above tau_corr, then average over graphs.
+            """
+            if V.numel() == 0 or bidx.numel() == 0:
+                return V.new_tensor(0.0)
+
+            B = int(bidx.max().item()) + 1 if bidx.numel() > 0 else 0
             vals = []
             for g in range(B):
                 sel = (bidx == g)
                 if sel.sum() < 2:
                     continue
-                X = V[sel]
+                X = V[sel]  # [n_g, K]
+                # standardize over items to avoid trivial scale effects
                 X = (X - X.mean(dim=0, keepdim=True)) / (X.std(dim=0, unbiased=False, keepdim=True) + eps)
-                C = (X.t() @ X) / X.size(0)
-                K_ = C.size(0)
+                # correlation proxy via normalized inner product
+                C = (X.t() @ X) / max(X.size(0), 1)  # [K,K]
                 M = C.abs()
-                off_mean = (M.sum() - M.diag().sum()) / max(K_ * (K_ - 1), 1)
-                vals.append(F.relu(off_mean - tau))
-            return torch.stack(vals).mean() if vals else V.new_tensor(0.0)
+                # off-diagonal mean
+                off_sum = M.sum() - M.diag().sum()
+                denom   = max(M.size(0) * (M.size(0) - 1), 1)
+                off_mean = off_sum / denom
+                vals.append(F.relu(off_mean - tau_corr))
+            return torch.stack(vals).mean() if len(vals) else V.new_tensor(0.0)
 
-        parts = []
-        parts.append(_per_graph_abs_corr_hinge(node_masks.squeeze(-1), node_batch))
-        parts.append(_per_graph_abs_corr_hinge(edge_masks.squeeze(-1), edge_batch))
-        parts.append(_per_graph_abs_corr_hinge(feat_masks.mean(dim=2), node_batch))
-        return torch.stack(parts).mean()
+        def _union_overlap_terms(V: torch.Tensor, bidx: torch.Tensor) -> torch.Tensor:
+            """
+            V: [items, K] mask probabilities in [0,1]
+            For each graph:
+            U_i = 1 - Π_k (1 - m_{k,i})      (smooth union)
+            S_i = Σ_k m_{k,i}                (aggregate overlap)
+            Loss per graph = mean( ReLU(tau_cov - U_i) + ReLU(S_i - tau_over) )
+            """
+            if V.numel() == 0 or bidx.numel() == 0:
+                return V.new_tensor(0.0)
+
+            Vc = V.clamp(0.0, 1.0)
+            B = int(bidx.max().item()) + 1 if bidx.numel() > 0 else 0
+            vals = []
+            for g in range(B):
+                sel = (bidx == g)
+                if sel.sum() == 0:
+                    continue
+                M = Vc[sel]                       # [n_g, K]
+                # smooth union (better gradients than torch.max)
+                U = 1.0 - torch.prod(1.0 - M + eps, dim=1)  # [n_g]
+                # aggregate overlap
+                S = M.sum(dim=1)                               # [n_g]
+                cov  = F.relu(tau_cov  - U).mean()
+                over = F.relu(S - tau_over).mean()
+                vals.append(cov + over)
+            return torch.stack(vals).mean() if len(vals) else V.new_tensor(0.0)
+
+        # -------- prepare modality tensors to shape [items, K] --------
+        N = _maybe_squeeze(node_masks)                   # [N_nodes, K]
+        E = _maybe_squeeze(edge_masks)                   # [N_edges, K]
+        # feat: if per-feature masks exist, average across features to a single prob per node
+        if feat_masks.dim() == 3 and feat_masks.size(-1) > 1:
+            Fm = feat_masks.mean(dim=-1)                 # [N_nodes, K]
+        else:
+            Fm = _maybe_squeeze(feat_masks)              # [N_nodes, K]
+
+        # -------- compute components per modality --------
+        n_corr = _per_graph_abs_corr_hinge(N, node_batch)
+        e_corr = _per_graph_abs_corr_hinge(E, edge_batch)
+        f_corr = _per_graph_abs_corr_hinge(Fm, node_batch)
+        corr   = torch.stack([n_corr, e_corr, f_corr]).mean()
+
+        n_uo = _union_overlap_terms(N, node_batch)
+        e_uo = _union_overlap_terms(E, edge_batch)
+        f_uo = _union_overlap_terms(Fm, node_batch)
+        uo   = torch.stack([n_uo, e_uo, f_uo]).mean()
+
+        # final combined diversity loss
+        # print(f"corr: {corr}, uo: {uo}")
+        # print(f"w_corr: {w_corr}, w_uo: {w_uo}")
+        # print(f"added loss: {w_corr * corr + w_uo * uo}")
+        loss = w_corr * corr + w_uo * uo
+        return loss
 
     def _mask_reg(self, node_mask, edge_mask, feat_mask, node_batch, edge_batch, expert_idx: int,
                   use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5)):
