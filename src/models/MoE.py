@@ -171,11 +171,21 @@ class MoE(nn.Module):
         return loss
 
     @staticmethod
-    def _load_balance(gate_probs, lam=0.1, eps=1e-8):
+    def _load_balance(gate_probs, lam=0.2, T=0.2, eps=1e-8):
         # gate_probs: (B,K)
         B, K = gate_probs.shape
-        p_bar = gate_probs.mean(0)                                # (K,)
-        H_marg = -(p_bar * (p_bar + eps).log()).sum()
-        H_rows = -(gate_probs * (gate_probs + eps).log()).sum(dim=1).mean()
-        return -H_marg + lam * H_rows
+        uniform = gate_probs.new_full((K,), 1.0 / K)
 
+        # 1) Balanced usage across batch (nonnegative, 0 at uniform marginal)
+        p_bar = gate_probs.mean(0)
+        L_bal = F.kl_div((p_bar + eps).log(), uniform, reduction='batchmean')
+
+        # 2) Per-sample sharpness (penalize uniform rows)
+        H_rows = -(gate_probs * (gate_probs + eps).log()).sum(dim=1).mean()
+
+        # 3) Spread winners across experts (soft top-1 histogram)
+        q = F.softmax((gate_probs + eps).log() / T, dim=-1)  # sharpened rows
+        counts = q.mean(dim=0)
+        L_top1 = F.kl_div((counts + eps).log(), uniform, reduction='batchmean')
+
+        return L_bal + lam * H_rows + 0.2 * L_top1
