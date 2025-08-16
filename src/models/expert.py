@@ -271,7 +271,7 @@ class Experts(nn.Module):
             feat_masks.append(feat_mask)
 
             # Apply masks
-            masked_x = x * node_mask * feat_mask  # (N, D)
+            masked_x = x * node_mask #* feat_mask  # (N, D)
             edge_weight = edge_mask.view(-1)
 
             # LECI-style invariant head: tiny GIN -> mean pool
