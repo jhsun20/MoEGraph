@@ -119,7 +119,7 @@ class Experts(nn.Module):
         tiny_lc_hidden = int(mcfg.get('leci_lc_hidden', hidden_dim))
         tiny_ea_hidden = int(mcfg.get('leci_ea_hidden', hidden_dim))
         tiny_la_hidden = int(mcfg.get('leci_la_hidden', hidden_dim))
-        tiny_depth     = int(mcfg.get('leci_depth', 2))
+        tiny_depth     = int(mcfg.get('leci_depth', 3))
         tiny_drop      = float(mcfg.get('leci_dropout', dropout))
 
         # One tiny lc_gnn and ea_gnn per expert (keeps behavior closest to LECI while preserving MoE)
@@ -136,7 +136,7 @@ class Experts(nn.Module):
         # Per-expert EA classifier (predicts environment id)
         self.num_envs = dataset_info['num_envs']
         self.ea_classifiers = nn.ModuleList([
-            nn.Linear(tiny_ea_hidden, self.num_envs) for _ in range(self.num_experts)
+            nn.Sequential(nn.Linear(tiny_ea_hidden, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_envs)) for _ in range(self.num_experts)
         ])
 
         # --- LECI-style tiny GINs for the LA (spur/complement) branch ---
