@@ -379,9 +379,11 @@ class Experts(nn.Module):
         if self.training:
             u = torch.rand_like(logits)
             g = -torch.log(-torch.log(u + 1e-20) + 1e-20)
-            y_soft = torch.sigmoid((logits + g) / T)
+            y_soft = torch.sigmoid((logits + g) / 0.1)
         else:
-            y_soft = torch.sigmoid(logits / T)
+            u = torch.rand_like(logits)
+            g = -torch.log(-torch.log(u + 1e-20) + 1e-20)
+            y_soft = torch.sigmoid((logits + g) / 0.1)
 
         y_hard = (y_soft > 0.5).float()
         return y_hard + (y_soft - y_soft.detach())
