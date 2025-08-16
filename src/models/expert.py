@@ -95,12 +95,12 @@ class Experts(nn.Module):
         self._weight_str_live     = 0.0
 
         # Mask temperature schedule (hard-concrete)
-        self.mask_temp_start          = float(mcfg.get('mask_temp_start', 2.0))
+        self.mask_temp_start          = float(mcfg.get('mask_temp_start', 5.0))
         self.mask_temp_end            = float(mcfg.get('mask_temp_end', 0.1))
-        self.mask_temp_anneal_epochs  = int(mcfg.get('mask_temp_anneal_epochs', 10))
+        self.mask_temp_anneal_epochs  = int(mcfg.get('mask_temp_anneal_epochs', 20))
         self.mask_temp_schedule       = str(mcfg.get('mask_temp_schedule', 'exp'))
         self._mask_temp               = self.mask_temp_start
-        self.eval_mask_temp_floor     = float(mcfg.get('eval_mask_temp_floor', 1.0))
+        self.eval_mask_temp_floor     = float(mcfg.get('eval_mask_temp_floor', 0.0))
 
         # ---------- Encoders / Heads ----------
         # Causal/selector encoder to get node embeddings Z for masks
