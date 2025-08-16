@@ -222,6 +222,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     all_targets = []
     all_aggregated_outputs = []
     all_mv_counts = []  # majority-vote "logits" = per-class vote counts (with tiny tie-breaker)
+    all_top1_logits, all_top2u_logits, all_top2w_logits = [], [], []
 
     gate_weight_accumulator = []
 
@@ -248,6 +249,29 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         # --- Majority vote across experts (unweighted) ---
         # Each expert votes for argmax class; count votes per class.
         B, K, C = expert_logits.size()
+
+        # Top-k expert indices by gate (per sample)
+        topk = min(2, K)
+        topk_idx = gate_weights.topk(k=topk, dim=1).indices        # (B, topk)
+
+        # ---- Top-1: take the single best expert’s logits
+        top1_logits = expert_logits[torch.arange(B, device=expert_logits.device).unsqueeze(1),
+                                    topk_idx[:, :1], :].squeeze(1) # (B, C)
+        all_top1_logits.append(top1_logits.detach())
+
+        # ---- Top-2 (unweighted): mean of the two experts’ logits
+        if topk >= 2:
+            g2 = expert_logits[torch.arange(B, device=expert_logits.device).unsqueeze(1),
+                            topk_idx[:, :2], :]                  # (B, 2, C)
+            top2u_logits = g2.mean(dim=1)                           # (B, C)
+            all_top2u_logits.append(top2u_logits.detach())
+
+            # ---- Top-2 (gate-weighted): normalize gates over top-2 then weight-sum
+            w2 = gate_weights.gather(1, topk_idx[:, :2])            # (B, 2)
+            w2 = w2 / (w2.sum(dim=1, keepdim=True) + 1e-8)
+            top2w_logits = (w2.unsqueeze(-1) * g2).sum(dim=1)       # (B, C)
+            all_top2w_logits.append(top2w_logits.detach())
+
         per_expert_preds = expert_logits.argmax(dim=2)                   # (B, K)
         vote_counts = F.one_hot(per_expert_preds, num_classes=C).sum(1).float()  # (B, C)
 
@@ -297,6 +321,30 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     print("Majority-vote metrics:", {f"mv_{k}": v for k, v in mv_metrics.items()})
     for k, v in mv_metrics.items():
         metrics[f"mv_{k}"] = v
+
+    # --- Top-1 / Top-2 metrics
+    if len(all_top1_logits) > 0:
+        top1_all = torch.cat(all_top1_logits, dim=0)  # (N, C)
+        top1_metrics = compute_metrics(top1_all, final_targets, metric_type)
+        print("Top-1-expert metrics:", {f"top1_{k}": v for k, v in top1_metrics.items()})
+        for k, v in top1_metrics.items():
+            metrics[f"top1_{k}"] = v
+
+    # Only if at least 2 experts exist
+    if K >= 2 and len(all_top2u_logits) > 0 and len(all_top2w_logits) > 0:
+        top2u_all = torch.cat(all_top2u_logits, dim=0)
+        top2w_all = torch.cat(all_top2w_logits, dim=0)
+
+        top2u_metrics = compute_metrics(top2u_all, final_targets, metric_type)
+        top2w_metrics = compute_metrics(top2w_all, final_targets, metric_type)
+
+        print("Top-2 (unweighted) metrics:", {f"top2u_{k}": v for k, v in top2u_metrics.items()})
+        print("Top-2 (gate-weighted) metrics:", {f"top2w_{k}": v for k, v in top2w_metrics.items()})
+
+        for k, v in top2u_metrics.items():
+            metrics[f"top2u_{k}"] = v
+        for k, v in top2w_metrics.items():
+            metrics[f"top2w_{k}"] = v
 
     metrics['loss'] = total_loss / len(loader.dataset)
     metrics['loss_ce'] = total_ce_loss / len(loader.dataset)
