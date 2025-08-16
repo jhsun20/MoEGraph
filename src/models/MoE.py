@@ -122,12 +122,12 @@ class MoE(nn.Module):
         return {
             'logits': agg_logits,
             'loss_total': total,
-            'loss_ce': ce,
-            'loss_reg': reg,
-            'loss_sem': sem,
-            'loss_str': strl,
-            'loss_div': div,
-            'loss_load': load,
+            'loss_ce': ce * self.weight_ce,
+            'loss_reg': reg * self.weight_reg,
+            'loss_sem': sem * self.weight_sem,
+            'loss_str': strl * self.weight_str,
+            'loss_div': div * self.weight_div,
+            'loss_load': load * self.weight_load,
             'gate_weights': gate_probs,              # (B, K)
             'rho': shared_out['rho'],
             'expert_logits': expert_logits,         # (B, K, C)
