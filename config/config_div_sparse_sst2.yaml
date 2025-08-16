@@ -41,7 +41,7 @@ model:
   weight_ce: 1.0
   weight_div: 0.5
   weight_load: 0.5
-  num_experts: 4
+  num_experts: 6
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
@@ -70,4 +70,4 @@ gate:
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 10
+  train_after: 5
