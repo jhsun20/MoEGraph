@@ -147,13 +147,14 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     top1_share  = top1_counts / top1_counts.sum().clamp_min(1.0)             # (K,)
 
     if not config.get("experiment", {}).get("hyper_search", {}).get("enable", False):
-        print("\nGate Load per Expert:")
-        for i, v in enumerate(load_balance):
-            print(f"  Expert {i}: {v.item():.4f}")
-        print("\nGate Top-1 share per Expert:")
+        print("\nGate Load & Top-1 share per Expert:")
         total_n = int(top1_counts.sum().item())
         for i in range(K):
-            print(f"  Expert {i}: {top1_share[i].item():.4f} ({int(top1_counts[i].item())}/{total_n})")
+            print(
+                f"  Expert {i}: "
+                f"load={load_balance[i].item():.4f} | "
+                f"top1={top1_share[i].item():.4f} "
+                f"({int(top1_counts[i].item())}/{total_n})")
  
 
     final_outputs = torch.cat(all_aggregated_outputs, dim=0)
@@ -274,13 +275,14 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     top1_share  = top1_counts / top1_counts.sum().clamp_min(1.0)             # (K,)
 
     if not config.get("experiment", {}).get("hyper_search", {}).get("enable", False):
-        print("\nGate Load per Expert:")
-        for i, v in enumerate(load_balance):
-            print(f"  Expert {i}: {v.item():.4f}")
-        print("\nGate Top-1 share per Expert:")
+        print("\nGate Load & Top-1 share per Expert:")
         total_n = int(top1_counts.sum().item())
         for i in range(K):
-            print(f"  Expert {i}: {top1_share[i].item():.4f} ({int(top1_counts[i].item())}/{total_n})")
+            print(
+                f"  Expert {i}: "
+                f"load={load_balance[i].item():.4f} | "
+                f"top1={top1_share[i].item():.4f} "
+                f"({int(top1_counts[i].item())}/{total_n})")
 
     final_outputs = torch.cat(all_aggregated_outputs, dim=0)
     final_targets = torch.cat(all_targets, dim=0)
