@@ -71,7 +71,7 @@ class Experts(nn.Module):
         # ---------- Schedulers (mask temp, LA ramp, IB ramp, STR ramp) ----------
         # LA (label adversary) target
         self.lambda_L_end = float(mcfg.get('lambda_L_end', mcfg.get('weight_la', 0.1)))
-        self.adv_warmup_epochs = int(mcfg.get('adv_warmup_epochs', 1))
+        self.adv_warmup_epochs = int(mcfg.get('adv_warmup_epochs', 5))
         self.adv_ramp_epochs   = int(mcfg.get('adv_ramp_epochs', 5))
         self._lambda_L = 0.0  # live value
 
