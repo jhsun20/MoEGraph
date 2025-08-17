@@ -7,7 +7,7 @@ experiment:
   debug:
     enable: true
     num_samples: 64
-    epochs: 5
+    epochs: 10
     verbose: false
   seeds: [42]  # Add more seeds as needed
   hyper_search:
@@ -17,7 +17,7 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODZINC"  # Specific dataset from GOOD
+  dataset_name: "GOODHIv"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
