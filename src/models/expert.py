@@ -350,7 +350,7 @@ class Experts(nn.Module):
                 # Classification CE (class-weighted)
                 if self.num_classes == 1 and self.metric == 'MAE':
                     ce = self._reg(logits_k, target)
-                elif self.num_classes == 1 and self.metric == 'Accuracy':
+                elif self.num_classes == 1 and self.metric != 'MAE':
                     ce = self._bce(logits_k, target)
                 else:
                     ce = self._ce(logits_k, target)
@@ -456,7 +456,10 @@ class Experts(nn.Module):
         return F.l1_loss(pred, target)
     
     def _bce(self, pred, target):
-        return F.binary_cross_entropy_with_logits(pred, target)
+        # pred: (K,B)
+        # target: (B,)
+        tgt = target.view(1, -1).expand_as(pred).to(pred.dtype)  # (K,B)
+        return F.binary_cross_entropy_with_logits(pred, tgt, reduction='none')  # (K,B)
 
     def _diversity_loss(
         self,

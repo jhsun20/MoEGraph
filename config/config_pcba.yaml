@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_sparse_zinc" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moeuil_diverse_sparse_pcba" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -18,7 +18,7 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODZINC"  # Specific dataset from GOOD
+  dataset_name: "GOODPCBA"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
