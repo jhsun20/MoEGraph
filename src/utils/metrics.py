@@ -117,6 +117,8 @@ def compute_metrics(outputs, targets, metric_type='Accuracy', threshold=0.5):
             mae = mean_absolute_error(targets, outputs, multioutput='raw_values')
             metrics['mae'] = np.mean(mae)
         else:  # Single output
+            print("outputs", outputs, outputs.shape)
+            print("targets", targets, targets.shape)
             metrics['mae'] = mean_absolute_error(targets, outputs)
     
     else:

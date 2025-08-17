@@ -2,44 +2,45 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_nodiverse_nosparse" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moeuil_diverse_sparse_twitter" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
     num_samples: 512
     epochs: 50
     verbose: false
-  seeds: [1, 2, 3]  # Add more seeds as needed
+  seeds: [1]  # Add more seeds as needed
   hyper_search:
-    enable: true
+    enable: false
     n_trials_1: 10
-    n_trials_2: 10
+    n_trials_2: 5
     test_after: true
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODCMNIST"  # Specific dataset from GOOD
+  dataset_name: "GOODTwitter"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 128
+  batch_size: 32
   num_workers: 4
 
 # Model configuration
 model:
-  type: "moe"  # Options: GIN, GCN, GraphSAGE, moe
+  type: "moe"  # Options: GIN, GCN, GraphSAGE, moe, moe_uil, uil
   parallel: false
-  hidden_dim: 64
+  hidden_dim: 300
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
   weight_str: 0.0
-  weight_sem: 1.0
+  weight_la: 0.05
+  weight_ea: 0.05
   weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 0.0
-  weight_load: 1.0
-  num_experts: 4
+  weight_div: 0.5
+  weight_load: 0.5
+  num_experts: 6
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
@@ -49,23 +50,23 @@ training:
   lr: 0.001
   weight_decay: 0.0001
   early_stopping:
-    patience: 10
+    patience: 20
     min_delta: 0.001
 
 # Logging configuration
 logging:
   wandb:
-    enable: true
+    enable: false
     project: "graph_moe_ood"
     entity: "jhsun163-university-of-toronto"
   log_interval: 10
-  save_model: false
+  save_model: true
 
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.01
+  entmax_alpha: 1.38
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 10
+  train_after: 3

@@ -17,12 +17,13 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODCMNIST"  # Specific dataset from GOOD
+  dataset_name: "GOODZINC"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 32
   num_workers: 4
+  domain: "scaffold"
 
 # Model configuration
 model:
@@ -32,7 +33,7 @@ model:
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
-  weight_str: 1.0
+  weight_str: 0.0
   weight_la: 1.0
   weight_ea: 1.0
   weight_reg: 1.0

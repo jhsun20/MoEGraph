@@ -41,12 +41,9 @@ class Experts(nn.Module):
     def __init__(self, config, dataset_info):
         super().__init__()
 
-        num_features = dataset_info['num_features']
-        num_classes  = dataset_info['num_classes']
-        if num_classes == 1:
-            if config['experiment']['debug']['verbose']:
-                print("[warn] num_classes=1; forcing to 2 for CE over {0,1}")
-            num_classes = 2
+        self.num_features = dataset_info['num_features']
+        self.num_classes  = dataset_info['num_classes']
+        self.metric = dataset_info['metric']
 
         mcfg         = config.get('model', {})
         hidden_dim   = mcfg['hidden_dim']
@@ -127,12 +124,12 @@ class Experts(nn.Module):
         # ---------- Encoders / Heads ----------
         # Causal/selector encoder to get node embeddings Z for masks
         self.causal_encoder = GINEncoderWithEdgeWeight(
-            num_features, hidden_dim, num_layers, dropout, train_eps=True
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
         )
 
         # Classifier encoder (masked pass)
         self.classifier_encoder = GINEncoderWithEdgeWeight(
-            num_features, hidden_dim, num_layers, dropout, train_eps=True
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
         )
 
         # --- LECI-style tiny GINs for invariant (lc) and environment (ea) heads ---
@@ -144,12 +141,12 @@ class Experts(nn.Module):
 
         # One tiny lc_gnn and ea_gnn per expert (keeps behavior closest to LECI while preserving MoE)
         self.lc_encoders = nn.ModuleList([
-            GINEncoderWithEdgeWeight(num_features, tiny_lc_hidden, tiny_depth, tiny_drop, train_eps=True)
+            GINEncoderWithEdgeWeight(self.num_features, tiny_lc_hidden, tiny_depth, tiny_drop, train_eps=True)
             for _ in range(self.num_experts)
         ])
 
         self.ea_encoders = nn.ModuleList([
-            GINEncoderWithEdgeWeight(num_features, tiny_ea_hidden, tiny_depth, tiny_drop, train_eps=True)
+            GINEncoderWithEdgeWeight(self.num_features, tiny_ea_hidden, tiny_depth, tiny_drop, train_eps=True)
             for _ in range(self.num_experts)
         ])
 
@@ -161,7 +158,7 @@ class Experts(nn.Module):
 
         # --- LECI-style tiny GINs for the LA (spur/complement) branch ---
         self.la_encoders = nn.ModuleList([
-            GINEncoderWithEdgeWeight(num_features, tiny_la_hidden, tiny_depth, tiny_drop, train_eps=True)
+            GINEncoderWithEdgeWeight(self.num_features, tiny_la_hidden, tiny_depth, tiny_drop, train_eps=True)
             for _ in range(self.num_experts)
         ])
 
@@ -176,17 +173,17 @@ class Experts(nn.Module):
             for _ in range(self.num_experts)
         ])
         self.expert_feat_masks = nn.ModuleList([
-            nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, num_features))
+            nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_features))
             for _ in range(self.num_experts)
         ])
 
         # Per-expert classifiers
         self.expert_classifiers = nn.ModuleList([
-            nn.Linear(hidden_dim, num_classes) for _ in range(self.num_experts)
+            nn.Linear(hidden_dim, self.num_classes) for _ in range(self.num_experts)
         ])
 
         # Label-adversarial head on semantic residual h_S
-        self.lbl_head_spur_sem = nn.Linear(hidden_dim, num_classes)
+        self.lbl_head_spur_sem = nn.Linear(hidden_dim, self.num_classes)
 
         # VIB heads on h_C (created lazily to bind H on first forward)
         self.ib_mu_head_sem      = None
@@ -351,7 +348,12 @@ class Experts(nn.Module):
                 hC_k     = h_stable_list[:, k, :]
 
                 # Classification CE (class-weighted)
-                ce = self._ce(logits_k, target)
+                if self.num_classes == 1 and self.metric == 'MAE':
+                    ce = self._reg(logits_k, target)
+                elif self.num_classes == 1 and self.metric == 'Accuracy':
+                    ce = self._bce(logits_k, target)
+                else:
+                    ce = self._ce(logits_k, target)
                 ce_list.append(ce)
 
                 # Mask regularization (per-graph keep-rate prior)
@@ -385,7 +387,10 @@ class Experts(nn.Module):
                         h_spur=h_spur
                     )
 
-                    str_loss = self.structure_consistency(x, edge_index, batch, k, logits_k)
+                    if self.weight_str > 0:
+                        str_loss = self.structure_consistency(x, edge_index, batch, k, logits_k)
+                    else:
+                        str_loss = hC_k.new_tensor(0.0)
 
                 else:
                     la = hC_k.new_tensor(0.0)
@@ -437,7 +442,7 @@ class Experts(nn.Module):
         y_hard = (y_soft > 0.5).float()
         return y_hard + (y_soft - y_soft.detach())
 
-    def _ce(self, pred, target, use_weights=True):
+    def _ce(self, pred, target, use_weights=False):
         if use_weights:
             C = pred.size(1)
             counts = torch.bincount(target, minlength=C).float()
@@ -446,6 +451,12 @@ class Experts(nn.Module):
             w = w / w.sum()
             return F.cross_entropy(pred, target, weight=w.to(pred.device))
         return F.cross_entropy(pred, target)
+    
+    def _reg(self, pred, target):
+        return F.l1_loss(pred, target)
+    
+    def _bce(self, pred, target):
+        return F.binary_cross_entropy_with_logits(pred, target)
 
     def _diversity_loss(
         self,

@@ -2,14 +2,14 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_sparse_zinc" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moeuil_diverse_sparse_motif" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
     num_samples: 512
     epochs: 50
     verbose: false
-  seeds: [1,2,3]  # Add more seeds as needed
+  seeds: [1]  # Add more seeds as needed
   hyper_search:
     enable: false
     n_trials_1: 10
@@ -18,13 +18,13 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODZINC"  # Specific dataset from GOOD
+  dataset_name: "GOODMotif"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 32
   num_workers: 4
-  domain: 'scaffold' # scaffold or size
+  domain: 'size' # basis or size
 
 # Model configuration
 model:
@@ -34,13 +34,14 @@ model:
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
-  weight_str: 1.0
-  weight_sem: 1.0
-  weight_reg: 0.5
+  weight_str: 0.0
+  weight_la: 0.1
+  weight_ea: 0.1
+  weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 0.1
-  weight_load: 0.1
-  num_experts: 4
+  weight_div: 0.5
+  weight_load: 0.5
+  num_experts: 6
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
 
 
@@ -65,8 +66,8 @@ logging:
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.3
+  entmax_alpha: 1.38
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 10
+  train_after: 5

@@ -36,11 +36,14 @@ class MoE(nn.Module):
         self.shared = Experts(config, dataset_info)
 
         # Gating network on raw graph
-        num_features   = dataset_info['num_features']
+        self.num_features   = dataset_info['num_features']
+        self.num_classes    = dataset_info['num_classes']
+        self.metric         = dataset_info['metric']
+
         gate_hidden    = config['gate']['hidden_dim']
         gate_depth     = config['gate']['depth']
         dropout        = config['model']['dropout']
-        self.gate_enc  = GINEncoderWithEdgeWeight(num_features, gate_hidden, gate_depth, dropout, train_eps=True)
+        self.gate_enc  = GINEncoderWithEdgeWeight(self.num_features, gate_hidden, gate_depth, dropout, train_eps=True)
         self.gate_mlp  = nn.Sequential(nn.Linear(gate_hidden, gate_hidden),
                                        nn.ReLU(),
                                        nn.Linear(gate_hidden, self.num_experts))
@@ -64,14 +67,14 @@ class MoE(nn.Module):
         # Gate on RAW graph (no expert info)
         gate_scores = self._gate_logits_raw(data)  # (B, K)
         # NEW: compute per-sample expert uncertainty u \in [0,1]
-#      u = mean_k H(p_k) / log(C), where p_k are per-expert class probs
-        expert_logits = shared_out['expert_logits']        # (B,K,C)
-        B, K, C = expert_logits.shape
-        with torch.no_grad():
-            per_expert_log_probs = expert_logits.log_softmax(dim=-1)        # (B,K,C)
-            per_expert_probs     = per_expert_log_probs.exp()
-            per_expert_entropy   = -(per_expert_probs * per_expert_log_probs).sum(dim=-1)   # (B,K)
-            u = per_expert_entropy.mean(dim=1) / (torch.log(torch.tensor(float(C), device=expert_logits.device)))  # (B,)
+        # u = mean_k H(p_k) / log(C), where p_k are per-expert class probs
+        # expert_logits = shared_out['expert_logits']        # (B,K,C)
+        # B, K, C = expert_logits.shape
+        # with torch.no_grad():
+        #     per_expert_log_probs = expert_logits.log_softmax(dim=-1)        # (B,K,C)
+        #     per_expert_probs     = per_expert_log_probs.exp()
+        #     per_expert_entropy   = -(per_expert_probs * per_expert_log_probs).sum(dim=-1)   # (B,K)
+        #     u = per_expert_entropy.mean(dim=1) / (torch.log(torch.tensor(float(C), device=expert_logits.device)))  # (B,)
 
 
         if self.current_epoch < self.train_after:
@@ -122,7 +125,7 @@ class MoE(nn.Module):
         agg_logits = weighted.sum(dim=1)                              # (B, C)
 
         # CE aggregated per expert, per sample
-        ce = self._gate_weighted_ce(expert_logits.transpose(0, 1), targets, gate_probs.transpose(0, 1))
+        ce = self._gate_weighted_ce(expert_logits.transpose(0, 1), targets, gate_probs.transpose(0, 1), self.metric, self.num_classes)
 
         # Other per-expert losses (scalars) — combine via avg gate weights over batch
         avg_gate = gate_probs.mean(dim=0)  # (K,)
@@ -162,16 +165,36 @@ class MoE(nn.Module):
         }
 
     @staticmethod
-    def _gate_weighted_ce(stacked_logits, targets, gate_weights):
+    def _gate_weighted_ce(stacked_logits, targets, gate_weights, metric, num_classes):
         """
         stacked_logits: (K, B, C)
         gate_weights:   (K, B)
         """
         K, B, _ = stacked_logits.shape
-        loss = stacked_logits[0, :, 0].new_tensor(0.0)
-        for k in range(K):
-            ce_per_sample = F.cross_entropy(stacked_logits[k], targets, reduction='none')  # (B,)
-            loss += (gate_weights[k] * ce_per_sample).mean()
+        if metric == 'MAE' and num_classes == 1:
+            # expect C == 1
+            pred = stacked_logits[..., 0]       # (K, B)
+            tgt  = targets.view(B).to(pred.dtype)  # (B,)
+
+            # elementwise absolute error, no reduction
+            per_exp_sample = F.l1_loss(pred, tgt.unsqueeze(0).expand_as(pred), reduction='none')  # (K,B)
+
+            # gate-weighted mean across experts and batch
+            loss = (gate_weights * per_exp_sample).mean()
+        elif metric == 'Accuracy' and num_classes == 1:
+        # one logit per sample
+            logits = stacked_logits[..., 0]      # (K,B)
+            tgt    = targets.view(B).to(logits.dtype)  # (B,)
+            # BCEWithLogits per-sample per-expert
+            per_exp_sample = torch.nn.functional.binary_cross_entropy_with_logits(
+                logits, tgt.unsqueeze(0).expand(K, B), reduction='none'
+            )  # (K,B)
+            loss = (gate_weights * per_exp_sample).mean()
+        else:
+            loss = stacked_logits[0, :, 0].new_tensor(0.0)
+            for k in range(K):
+                ce_per_sample = F.cross_entropy(stacked_logits[k], targets, reduction='none')  # (B,)
+                loss += (gate_weights[k] * ce_per_sample).mean()
         return loss
 
     @staticmethod

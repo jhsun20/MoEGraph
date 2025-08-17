@@ -67,7 +67,7 @@ def load_dataset(config):
                     continue
                 if datasets['task'] == 'Binary classification':
                     setattr(dataset, 'n_classes', 2)
-                elif datasets['task'] == 'Regression':
+                elif datasets['task'] == 'Regression' or datasets['metric'] == 'MAE':
                     setattr(dataset, 'n_classes', 1)
                 else:
                     setattr(dataset, 'n_classes', len(torch.unique(dataset.data.y)))
