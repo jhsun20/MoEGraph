@@ -456,11 +456,14 @@ class Experts(nn.Module):
         return F.l1_loss(pred, target)
     
     def _bce(self, pred, target):
-        # pred: (K,B)
-        # target: (B,)
-        tgt = target.view(1, -1).expand_as(pred).to(pred.dtype)  # (K,B)
-        return F.binary_cross_entropy_with_logits(pred, tgt, reduction='none')  # (K,B)
-
+        # pred: (B,) or (B,1)
+        # target: (B,) or (B,1)
+        if pred.dim() == 2 and pred.size(1) == 1:
+            pred = pred[:, 0]
+        if target.dim() == 2 and target.size(1) == 1:
+            target = target[:, 0]
+        return F.binary_cross_entropy_with_logits(pred, target.float(), reduction='none')  # (B,)
+    
     def _diversity_loss(
         self,
         node_masks: torch.Tensor,   # [N_nodes, K, 1] or [N_nodes, K]

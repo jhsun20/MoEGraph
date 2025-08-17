@@ -186,8 +186,8 @@ class MoE(nn.Module):
             logits = stacked_logits[..., 0]      # (K,B)
             tgt    = targets.view(B).to(logits.dtype)  # (B,)
             # BCEWithLogits per-sample per-expert
-            per_exp_sample = torch.nn.functional.binary_cross_entropy_with_logits(
-                logits, tgt.unsqueeze(0).expand(K, B), reduction='none'
+            per_exp_sample = F.binary_cross_entropy_with_logits(
+                logits, tgt.unsqueeze(0).expand_as(logits), reduction='none'
             )  # (K,B)
             loss = (gate_weights * per_exp_sample).mean()
         else:
