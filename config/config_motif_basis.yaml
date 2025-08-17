@@ -1,0 +1,73 @@
+# Main configuration file for GNN experiments
+
+# Experiment settings
+experiment:
+  name: "moeuil_diverse_sparse_motif" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  device: "cuda"  # or "cpu"
+  debug:
+    enable: false
+    num_samples: 512
+    epochs: 50
+    verbose: false
+  seeds: [1]  # Add more seeds as needed
+  hyper_search:
+    enable: false
+    n_trials_1: 10
+    n_trials_2: 5
+    test_after: true
+
+# Dataset configuration
+dataset:
+  dataset_name: "GOODMotif"  # Specific dataset from GOOD
+  task_type: "graph_classification"
+  path: "./datasets"
+  shift_type: "covariate" # covariate, concept, no_shift
+  batch_size: 32
+  num_workers: 4
+  domain: 'basis' # basis or size
+
+# Model configuration
+model:
+  type: "moe"  # Options: GIN, GCN, GraphSAGE, moe
+  parallel: false
+  hidden_dim: 300
+  num_layers: 3
+  dropout: 0.5
+  pooling: "mean"  # Options: mean, sum, max
+  weight_str: 0.0
+  weight_la: 0.1
+  weight_ea: 0.1
+  weight_reg: 1.0
+  weight_ce: 1.0
+  weight_div: 0.5
+  weight_load: 0.5
+  num_experts: 6
+  aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
+
+
+# Training configuration
+training:
+  epochs: 100
+  lr: 0.001
+  weight_decay: 0.0001
+  early_stopping:
+    patience: 20
+    min_delta: 0.001
+
+# Logging configuration
+logging:
+  wandb:
+    enable: false
+    project: "graph_moe_ood"
+    entity: "jhsun163-university-of-toronto"
+  log_interval: 10
+  save_model: true
+
+# Gating module configuration
+gate:
+  activation: "entmax"
+  entmax_alpha: 1.38
+  model: "GIN"
+  depth: 2
+  hidden_dim: 64
+  train_after: 5

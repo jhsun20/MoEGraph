@@ -61,6 +61,7 @@ if __name__ == "__main__":
     parser.add_argument('--shift_type', type=str, help='Shift type (covariate, concept, no_shift)')
     parser.add_argument('--batch_size', type=int, help='Batch size')
     parser.add_argument('--num_workers', type=int, help='Number of workers')
+    parser.add_argument('--domain', type=str, help='Domain (scaffold, basis, size)')
 
     # Model arguments
     parser.add_argument('--model_type', type=str, help='Model type (GIN, GCN, GraphSAGE, etc.)')
@@ -138,6 +139,8 @@ if __name__ == "__main__":
         config['dataset']['batch_size'] = args.batch_size
     if args.num_workers:
         config['dataset']['num_workers'] = args.num_workers
+    if args.domain:
+        config['dataset']['domain'] = args.domain
 
     if args.model_type:
         config['model']['type'] = args.model_type
