@@ -71,7 +71,7 @@ class Experts(nn.Module):
         # ---------- Schedulers (mask temp, LA ramp, IB ramp, STR ramp) ----------
         # LA (label adversary) target
         self.lambda_L_end = float(mcfg.get('lambda_L_end', mcfg.get('weight_la', 0.1)))
-        self.adv_warmup_epochs = int(mcfg.get('adv_warmup_epochs', 5))
+        self.adv_warmup_epochs = int(mcfg.get('adv_warmup_epochs', 1))
         self.adv_ramp_epochs   = int(mcfg.get('adv_ramp_epochs', 5))
         self._lambda_L = 0.0  # live value
 
@@ -679,13 +679,24 @@ class Experts(nn.Module):
         # vib = self._beta_ib * kl_ps.mean()
 
         # --- LA on complement embedding ---
+        h_spur_adv = grad_reverse(h_spur, self._lambda_L)
         if h_spur is None:
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
         la = h_masked.new_tensor(0.0)
         if self._lambda_L > 0.:
-            logits_y_spur = self.lbl_head_spur_sem(grad_reverse(h_spur, self._lambda_L))
-            la = F.cross_entropy(logits_y_spur, labels)
+            if getattr(self, "metric", None) == "MAE":
+                # ----- Regression head (lazy init) -----
+                Hs = h_spur.size(1)
+                if not hasattr(self, "reg_head_spur_sem"):
+                    self.reg_head_spur_sem = nn.Linear(Hs, 1).to(h_spur.device)
 
+                pred = self.reg_head_spur_sem(h_spur_adv).squeeze(-1)  # (B,)
+                tgt  = labels.view(-1).to(pred.dtype)                  # (B,)
+                la   = F.l1_loss(pred, tgt, reduction='mean')          # MAE
+            else:
+                # ----- Classification head (existing path) -----
+                logits_y_spur = self.lbl_head_spur_sem(h_spur_adv)     # (B, num_classes)
+                la = F.cross_entropy(logits_y_spur, labels)
         return la
     
     def _kmeans_labels(self, X: torch.Tensor, K: int, iters: int = 10) -> torch.Tensor:

@@ -4,13 +4,13 @@
 CONFIGS=(
   "config/config_zinc_scaffold.yaml"
   "config/config_zinc_size.yaml"
+  "config/config_cmnist.yaml"
+  "config/config_sst2.yaml"
+  "config/config_twitter.yaml"
   "config/config_motif_basis.yaml"
   "config/config_motif_size.yaml"
   "config/config_hiv_scaffold.yaml"
   "config/config_hiv_size.yaml"
-  "config/config_cmnist.yaml"
-  "config/config_sst2.yaml"
-  "config/config_twitter.yaml"
 )
 
 # Run each config sequentially
