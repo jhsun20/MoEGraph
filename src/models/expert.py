@@ -348,7 +348,7 @@ class Experts(nn.Module):
                 hC_k     = h_stable_list[:, k, :]
 
                 # Classification CE (class-weighted)
-                print(f"self.num_classes: {self.num_classes}, self.metric: {self.metric}")
+                # print(f"self.num_classes: {self.num_classes}, self.metric: {self.metric}")
                 if self.num_classes == 1 and self.metric == 'MAE':
                     ce = self._reg(logits_k, target)
                 elif self.num_classes == 1 and self.metric != 'MAE':
