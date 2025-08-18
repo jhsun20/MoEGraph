@@ -44,6 +44,8 @@ class Experts(nn.Module):
         self.num_features = dataset_info['num_features']
         self.num_classes  = dataset_info['num_classes']
         self.metric = dataset_info['metric']
+        if self.metric == "Accuracy" and self.num_classes == 1:
+            self.num_classes = 2
 
         mcfg         = config.get('model', {})
         hidden_dim   = mcfg['hidden_dim']
@@ -445,6 +447,7 @@ class Experts(nn.Module):
         return y_hard + (y_soft - y_soft.detach())
 
     def _ce(self, pred, target, use_weights=False):
+        print(f"pred: {pred.shape}, target: {target.shape}")
         if use_weights:
             C = pred.size(1)
             counts = torch.bincount(target, minlength=C).float()
