@@ -405,6 +405,7 @@ def train(config, trial=None):
     
     # Set device
     device = torch.device(config['experiment']['device'] if torch.cuda.is_available() else "cpu")
+    print(f"device: {device}")
     verbose = config['experiment']['debug']['verbose']
     
     # Initialize logger
