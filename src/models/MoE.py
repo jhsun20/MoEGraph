@@ -38,6 +38,8 @@ class MoE(nn.Module):
         # Gating network on raw graph
         self.num_features   = dataset_info['num_features']
         self.num_classes    = dataset_info['num_classes']
+        if self.num_classes == 1 and dataset_info['metric'] == "Accuracy":
+            self.num_classes = 2
         self.metric         = dataset_info['metric']
 
         gate_hidden    = config['gate']['hidden_dim']
