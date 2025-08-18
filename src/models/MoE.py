@@ -171,6 +171,7 @@ class MoE(nn.Module):
         gate_weights:   (K, B)
         """
         K, B, _ = stacked_logits.shape
+        print(f"metric: {metric}, num_classes: {num_classes}")
         if metric == 'MAE' and num_classes == 1:
             # expect C == 1
             pred = stacked_logits[..., 0]       # (K, B)
