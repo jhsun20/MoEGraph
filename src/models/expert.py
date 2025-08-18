@@ -447,7 +447,7 @@ class Experts(nn.Module):
         return y_hard + (y_soft - y_soft.detach())
 
     def _ce(self, pred, target, use_weights=False):
-        print(f"pred: {pred.shape}, target: {target.shape}")
+        #print(f"pred: {pred.shape}, target: {target.shape}")
         if use_weights:
             C = pred.size(1)
             counts = torch.bincount(target, minlength=C).float()
