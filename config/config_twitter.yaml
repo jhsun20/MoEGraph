@@ -34,20 +34,22 @@ model:
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
   weight_str: 0.0
-  weight_la: 0.05
-  weight_ea: 0.05
+  weight_la: 0.1
+  weight_ea: 0.001
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 0.5
   weight_load: 0.5
   num_experts: 6
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
+  adv_warmup_epochs: 50
+  adv_ramp_epochs: 20
 
 
 # Training configuration
 training:
   epochs: 100
-  lr: 0.001
+  lr: 0.0001
   weight_decay: 0.0001
   early_stopping:
     patience: 20
@@ -69,4 +71,4 @@ gate:
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 3
+  train_after: 20

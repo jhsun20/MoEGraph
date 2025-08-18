@@ -581,12 +581,12 @@ def train(config, trial=None):
                 logger.save_model(model, epoch, val_metrics)
                 if not is_tuning:
                     logger.logger.info(f"New best model saved with {primary_metric}: {best_val_acc:.4f}")
-            else:
-                patience_counter += 1
-                if patience_counter >= config['training']['early_stopping']['patience']:
-                    if not is_tuning:
-                        logger.logger.info(f"Early stopping at epoch {epoch}")
-                    break
+            # else:
+            #     patience_counter += 1
+            #     if patience_counter >= config['training']['early_stopping']['patience']:
+            #         if not is_tuning:
+            #             logger.logger.info(f"Early stopping at epoch {epoch}")
+            #         break
         
         if is_tuning:
             del optimizer
