@@ -389,7 +389,8 @@ class Experts(nn.Module):
                     )
 
                     if self.weight_str > 0:
-                        str_loss = self.structure_consistency(x, edge_index, batch, k, logits_k)
+                        #str_loss = self.structure_consistency(x, edge_index, batch, k, logits_k)
+                        str_loss = hC_k.new_tensor(0.0)
                     else:
                         str_loss = hC_k.new_tensor(0.0)
 
