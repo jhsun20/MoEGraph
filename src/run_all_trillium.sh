@@ -11,6 +11,7 @@
 set -euo pipefail
 
 module purge
+module load StdEnv/2023 gcc/12.3
 module load rdkit/2024.03.5               # only if you actually need RDKit
 
 # activate env in this directory
