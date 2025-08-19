@@ -5,14 +5,16 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=12:00:00
 #SBATCH --account=def-cglee
-#SBATCH -o logs/%x-%j.out
+#SBATCH -o /logs/%x-%j.out
 #SBATCH --chdir=/scratch/jhsun/MoEGraph   # ensures we run from your project dir
+export TORCH_GEOMETRIC_CACHE=/scratch/$USER/pyg_cache
+mkdir -p $TORCH_GEOMETRIC_CACHE
 
 set -euo pipefail
 
 module purge
 module load StdEnv/2023 gcc/12.3
-module load rdkit/2024.03.5               # only if you actually need RDKit
+module load rdkit/2024.03.5        
 
 # activate env in this directory
 source moegraphenv/bin/activate
