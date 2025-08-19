@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
 
-from torch_geometric.nn import global_mean_pool, global_sum_pool
+from torch_geometric.nn import global_mean_pool, global_add_pool
 from torch_geometric.nn import BatchNorm as PYG_BatchNorm  # for isinstance checks
 from models.gnn_models import GINEncoderWithEdgeWeight
 from torch_geometric.utils import to_undirected
@@ -315,7 +315,7 @@ class Experts(nn.Module):
             if self.global_pooling == 'mean':
                 h_stable = global_mean_pool(masked_Z_lc, batch)  # h_C
             elif self.global_pooling == 'sum':
-                h_stable = global_sum_pool(masked_Z_lc, batch)  # h_C
+                h_stable = global_add_pool(masked_Z_lc, batch)  # h_C
 
             # Classify with your existing per-expert classifier
             logit = self.expert_classifiers[k](h_stable)
@@ -325,7 +325,7 @@ class Experts(nn.Module):
             if self.global_pooling == 'mean':
                 h_ea = global_mean_pool(masked_Z_ea, batch)
             elif self.global_pooling == 'sum':
-                h_ea = global_sum_pool(masked_Z_ea, batch)
+                h_ea = global_add_pool(masked_Z_ea, batch)
 
             h_stable_list.append(h_stable)
             expert_logits.append(logit)
@@ -340,7 +340,7 @@ class Experts(nn.Module):
         if self.global_pooling == 'mean':
             h_orig = global_mean_pool(Z, batch)            # (B, H)
         elif self.global_pooling == 'sum':
-            h_orig = global_sum_pool(Z, batch)            # (B, H)
+            h_orig = global_add_pool(Z, batch)            # (B, H)  
 
         out = {
             'h_stable': h_stable_list,
@@ -772,7 +772,7 @@ class Experts(nn.Module):
         if self.global_pooling == 'mean':
             hC_aug = global_mean_pool(Z_lc_aug, batch_aug)
         elif self.global_pooling == 'sum':
-            hC_aug = global_sum_pool(Z_lc_aug, batch_aug)
+            hC_aug = global_add_pool(Z_lc_aug, batch_aug)
         logits_aug = self.expert_classifiers[k](hC_aug)
 
         # KL(p_weak || p_aug) at temperature T
@@ -930,7 +930,7 @@ class Experts(nn.Module):
         if self.global_pooling == 'mean':
             h_spur = global_mean_pool(Z_spur, batch)             # (B,H_enc)
         elif self.global_pooling == 'sum':
-            h_spur = global_sum_pool(Z_spur, batch)             # (B,H_enc)
+            h_spur = global_add_pool(Z_spur, batch)             # (B,H_enc)
         return h_spur
     
     def enforce_edge_mask_symmetry(self, edge_index: torch.Tensor,
