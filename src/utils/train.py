@@ -22,6 +22,9 @@ import warnings
 
 # Ignore all FutureWarnings
 warnings.simplefilter("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message="An issue occurred while importing 'pyg-lib'")
+warnings.filterwarnings("ignore", message="An issue occurred while importing 'torch-sparse'")
+warnings.filterwarnings("ignore", message="You are using `torch.load` with `weights_only=False`")
 
 
 def train_epoch(model, loader, optimizer, dataset_info, device):
