@@ -18,6 +18,11 @@ from models.model_factory import get_model
 from utils.logger import Logger
 from utils.metrics import compute_metrics
 
+import warnings
+
+# Ignore all FutureWarnings
+warnings.simplefilter("ignore", category=FutureWarning)
+
 
 def train_epoch(model, loader, optimizer, dataset_info, device):
     """Train model for one epoch."""
