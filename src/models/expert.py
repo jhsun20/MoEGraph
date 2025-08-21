@@ -54,7 +54,7 @@ class Experts(nn.Module):
 
         # --- BN freeze controls (optional; set via config['model']) ---
         mcfg_bn = config.get('model', {})
-        self.global_pooling = mcfg_bn.get('global_pooling', 'sum')
+        self.global_pooling = mcfg_bn.get('global_pooling', 'mean')
         # Freeze BN running stats (and optionally affine params) at/after this epoch. Use -1 to disable.
         self.bn_freeze_epoch  = int(mcfg_bn.get('bn_freeze_epoch', -1))
         self.bn_freeze_affine = bool(mcfg_bn.get('bn_freeze_affine', False))
@@ -280,7 +280,7 @@ class Experts(nn.Module):
             node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
             # Enforce symmetry for edges that have reverse edges
-            #edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
+            edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
             feat_mask = self._hard_concrete_mask(feat_mask_logits, self._mask_temp, is_eval=is_eval)
             # if k == 0:  # or pick any expert index you want to monitor
             #     report = mask_symmetry_report(edge_index, edge_mask.view(-1))

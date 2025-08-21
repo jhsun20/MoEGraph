@@ -31,6 +31,7 @@ model:
   type: "moe"  # Options: GIN, GCN, GraphSAGE, moe
   parallel: false
   hidden_dim: 300
+  global_pooling: "mean"
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
