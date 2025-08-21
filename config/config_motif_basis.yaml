@@ -23,7 +23,7 @@ dataset:
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 32
-  num_workers: 4
+  num_workers: 6
   domain: 'basis' # basis or size
 
 # Model configuration
@@ -40,12 +40,12 @@ model:
   weight_ea: 0.1
   weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 0.1
+  weight_div: 1.0
   weight_load: 0.5
   num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
-  adv_warmup_epochs: 5
-  adv_ramp_epochs: 10
+  adv_warmup_epochs: 30
+  adv_ramp_epochs: 20
 
 # Training configuration
 training:
