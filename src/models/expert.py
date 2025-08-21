@@ -708,14 +708,6 @@ class Experts(nn.Module):
                 pred = self.reg_head_spur_sem(h_spur_adv).squeeze(-1)  # (B,)
                 tgt  = labels.view(-1).to(pred.dtype)                  # (B,)
                 la   = F.l1_loss(pred, tgt, reduction='mean')          # MAE
-            elif getattr(self, "metric", None) == "Accuracy" and self.num_classes == 1:
-                # ----- Binary Classification head (existing path) -----
-                logits_y_spur = self.lbl_head_spur_sem(h_spur_adv)     # (B, num_classes)
-                if logits_y_spur.dim() == 2 and logits_y_spur.size(1) == 1:
-                    logits_y_spur = logits_y_spur[:, 0]
-                if labels.dim() == 2 and labels.size(1) == 1:
-                    labels = labels[:, 0]
-                la = F.binary_cross_entropy_with_logits(logits_y_spur, labels.float(), reduction='mean')
             else:
                 # ----- Classification head (existing path) -----
                 logits_y_spur = self.lbl_head_spur_sem(h_spur_adv)     # (B, num_classes)
