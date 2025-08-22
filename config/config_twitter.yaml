@@ -42,7 +42,7 @@ model:
   weight_load: 0.5
   num_experts: 6
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
-  adv_warmup_epochs: 20
+  adv_warmup_epochs: 10
   adv_ramp_epochs: 5
 
 
@@ -71,4 +71,4 @@ gate:
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 20
+  train_after: 10
