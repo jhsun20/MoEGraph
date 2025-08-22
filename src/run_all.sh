@@ -5,7 +5,7 @@ CONFIGS=(
   "config/config_cmnist.yaml"
   "config/config_motif_basis.yaml"
   "config/config_twitter.yaml"
-  "config/config_motif_sst2.yaml"
+  "config/config_sst2.yaml"
 )
 
 # Run each config sequentially
