@@ -30,6 +30,7 @@ dataset:
 model:
   type: "moe"  # Options: GIN, GCN, GraphSAGE, moe
   parallel: false
+  global_pooling: "sum"
   hidden_dim: 300
   num_layers: 3
   dropout: 0.5

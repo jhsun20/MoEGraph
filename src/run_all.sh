@@ -2,8 +2,6 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-  "config/config_cmnist.yaml"
-  "config/config_motif_basis.yaml"
   "config/config_twitter.yaml"
   "config/config_sst2.yaml"
 )
@@ -19,7 +17,7 @@ for CONFIG_PATH in "${CONFIGS[@]}"; do
     python src/main.py --config "$CONFIG_PATH"
 
     # Clear datasets after each run
-    rm -rf /workspace/MoEGraph/datasets/*
+    # rm -rf /workspace/MoEGraph/datasets/*
 
     echo ""
 done
