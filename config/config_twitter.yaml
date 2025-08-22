@@ -34,8 +34,8 @@ model:
   dropout: 0.5
   pooling: "sum"  # Options: mean, sum, max
   weight_str: 0.0
-  weight_la: 0.03
-  weight_ea: 0.03
+  weight_la: 0.1
+  weight_ea: 0.1
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 0.5
