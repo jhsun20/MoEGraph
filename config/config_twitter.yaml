@@ -43,7 +43,7 @@ model:
   num_experts: 6
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
   adv_warmup_epochs: 0
-  adv_ramp_epochs: 5
+  adv_ramp_epochs: 10
 
 
 # Training configuration
