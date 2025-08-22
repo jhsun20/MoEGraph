@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_sparse_motif" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moe_motif_basis" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false

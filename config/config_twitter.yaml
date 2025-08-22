@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_sparse_twitter" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moe_twitter" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false

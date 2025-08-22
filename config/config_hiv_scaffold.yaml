@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_sparse_hiv" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moe_hiv_scaffold" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
