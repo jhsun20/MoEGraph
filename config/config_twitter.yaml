@@ -35,11 +35,11 @@ model:
   pooling: "mean"  # Options: mean, sum, max
   weight_str: 0.0
   weight_la: 0.03
-  weight_ea: 0.03
+  weight_ea: 0.1
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 0.5
-  weight_load: 0.5
+  weight_load: 0.1
   num_experts: 6
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
   adv_warmup_epochs: 10
@@ -49,7 +49,7 @@ model:
 # Training configuration
 training:
   epochs: 100
-  lr: 0.0001
+  lr: 0.001
   weight_decay: 0.0001
   early_stopping:
     patience: 20
