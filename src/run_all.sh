@@ -4,6 +4,8 @@
 CONFIGS=(
   "config/config_twitter.yaml"
   "config/config_sst2.yaml"
+  "config/config_hiv_scaffold.yaml"
+  "config/config_motif_basis.yaml"
 )
 
 # Run each config sequentially
