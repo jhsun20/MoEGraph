@@ -46,6 +46,8 @@ model:
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
   adv_warmup_epochs: 0
   adv_ramp_epochs: 5
+  strinv_warmup_epochs: 10
+  strinv_ramp_epochs: 5
 
 
 # Training configuration
