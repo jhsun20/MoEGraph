@@ -37,7 +37,7 @@ model:
   pooling: "mean"  # Options: mean, sum, max
   weight_str: 0.2
   weight_la: 0.2
-  weight_ea: 0.2
+  weight_ea: 0.02
   weight_reg: 0.5
   weight_ce: 1.0
   weight_div: 1.0
