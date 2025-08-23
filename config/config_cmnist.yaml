@@ -34,7 +34,7 @@ model:
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
-  weight_str: 0.0
+  weight_str: 0.1
   weight_la: 0.1
   weight_ea: 0.1
   weight_reg: 1.0
