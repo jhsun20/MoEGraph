@@ -69,7 +69,7 @@ class Experts(nn.Module):
         self.weight_la = float(mcfg['weight_la'])
         self.weight_ea = float(mcfg['weight_ea'])
         self.weight_div = float(mcfg['weight_div'])
-        self.weight_str = float(mcfg['weight_str'])  # baseline/static value; live value is scheduled below
+        self.weight_str = float(mcfg['weight_str'])
 
         # ---------- Schedulers (mask temp, LA ramp, IB ramp, STR ramp) ----------
         # LA (label adversary) target
@@ -85,36 +85,11 @@ class Experts(nn.Module):
         self.ea_ramp_epochs   = int(mcfg.get('ea_ramp_epochs',   self.adv_ramp_epochs))
         self._lambda_E = 0.0  # live value updated in set_epoch
 
-        # VIB (IB) target
-        self.beta_ib_end  = float(mcfg.get('beta_ib_end', 1e-3))
-        self.ib_warmup_epochs  = int(mcfg.get('ib_warmup_epochs', 3))
-        self.ib_ramp_epochs    = int(mcfg.get('ib_ramp_epochs', 20))
-        self.ib_free_bits      = float(mcfg.get('ib_free_bits', 0.5))
-        self._beta_ib = 0.0  # live value
-
         # Structural invariance (live) weight schedule (even while str_loss=0.0 for now)
         self.weight_str_end       = float(mcfg.get('weight_str_end', self.weight_str))
-        self.strinv_warmup_epochs = int(mcfg.get('strinv_warmup_epochs', 5))
-        self.strinv_ramp_epochs   = int(mcfg.get('strinv_ramp_epochs', 5))
+        self.strinv_warmup_epochs = int(mcfg.get('strinv_warmup_epochs', self.adv_warmup_epochs))
+        self.strinv_ramp_epochs   = int(mcfg.get('strinv_ramp_epochs', self.adv_ramp_epochs))
         self._weight_str_live     = 0.0
-        self.consistency_T = float(mcfg.get('consistency_T', 2.0))
-
-        # --- Node-add augmentation controls (consistency branch only) ---
-        self.cons_use_node_add   = bool(mcfg.get('cons_use_node_add', False))
-        self.cons_node_add_ratio = float(mcfg.get('cons_node_add_ratio', 0.10))  # fraction of nodes to add per graph
-        self.cons_node_add_k     = int(mcfg.get('cons_node_add_k', 2))          # edges from each new node to existing
-        self.cons_node_add_mode  = str(mcfg.get('cons_node_add_mode', 'noise')) # 'noise' | 'sample'
-
-        # --------- Per-expert light policies (used after optional node-add) ----------
-        base_fd   = float(mcfg.get('cons_feat_drop_base', 0.05))
-        step_fd   = float(mcfg.get('cons_policy_step', 0.03))
-        base_jit  = float(mcfg.get('cons_jitter_base', 0.0))
-        self.aug_policies = []
-        for k in range(self.num_experts):
-            self.aug_policies.append({
-                "feat_drop": min(max(base_fd + k * step_fd, 0.0), 0.5),
-                "jitter_std": max(base_jit + 0.005 * k, 0.0),
-            })
 
         # Mask temperature schedule (hard-concrete)
         self.mask_temp_start          = float(mcfg.get('mask_temp_start', 5.0))
@@ -226,13 +201,6 @@ class Experts(nn.Module):
             r_ea = min((epoch - self.ea_warmup_epochs) / max(self.ea_ramp_epochs, 1), 1.0)
             self._lambda_E = float(r_ea * self.lambda_E_end)
 
-        # IB ramp (after warmup)
-        if epoch < self.ib_warmup_epochs:
-            self._beta_ib = 0.0
-        else:
-            r_ib = min((epoch - self.ib_warmup_epochs) / max(self.ib_ramp_epochs, 1), 1.0)
-            self._beta_ib = float(r_ib * self.beta_ib_end)
-
         # Structural invariance (live) weight ramp (after warmup)
         if epoch < self.strinv_warmup_epochs:
             self._weight_str_live = 0.0
@@ -242,13 +210,8 @@ class Experts(nn.Module):
 
         if self.verbose and epoch % 10 == 0:
             print(f"[Experts.set_epoch] epoch={epoch} | temp={self._mask_temp:.3f} "
-                  f"| lambda_L={self._lambda_L:.4f} | beta_ib={self._beta_ib:.6f} "
+                  f"| lambda_L={self._lambda_L:.4f} "
                   f"| w_str_live={self._weight_str_live:.4f}")
-            
-        # Optionally freeze BN at/after a chosen epoch (once).
-        if (not self._bn_frozen) and (self.bn_freeze_epoch >= 0) and (epoch >= self.bn_freeze_epoch):
-            self._freeze_bn(freeze_affine=self.bn_freeze_affine, verbose=self.verbose)
-            self._bn_frozen = True
 
     def forward(self, data, target=None):
         """
@@ -402,8 +365,28 @@ class Experts(nn.Module):
                     )
 
                     if self.weight_str > 0:
-                        #str_loss = self.structure_consistency(x, edge_index, batch, k, logits_k)
-                        str_loss = hC_k.new_tensor(0.0)
+                        h_drop_main = self._encode_complement_subgraph(
+                            data=data,
+                            node_mask=node_mask,                 # masks computed for expert k above
+                            edge_mask=edge_mask.view(-1),
+                            feat_mask=feat_mask,
+                            encoder=self.lc_encoders[k],         # <-- main (invariant) encoder, not LA encoder
+                            symmetrize=False,
+                        )
+                        logits_drop_main = self.expert_classifiers[k](h_drop_main)
+
+                        nec_loss = self._cf_label_necessity_losses(
+                            logits_drop=logits_drop_main,
+                            target=target,
+                            num_classes=self.num_classes,           # 1 for single-logit binary; else C
+                            # early training:
+                            w_entropy=0.2, w_kl_uniform=0.0, w_true_hinge_prob=0.1,
+                            # later add:
+                            # w_true_hinge_prob=0.3, tau_prob=0.3
+                            # or relative margin if you pass logits_full:
+                            # logits_full=logits_full_main, w_rel_margin=0.3, rel_margin=1.0
+                            )
+                        str_loss = nec_loss['loss_nec']
                     else:
                         str_loss = hC_k.new_tensor(0.0)
 
@@ -732,142 +715,100 @@ class Experts(nn.Module):
                     C[k] = X[sel].mean(dim=0)
         return a
     
-    def structure_consistency(self, x, edge_index, batch, k, logits_k):
-        # Build augmented view: optional node-add, then per-expert light feature aug
-        if self.cons_use_node_add:
-            x_aug, edge_index_aug, batch_aug = self._augment_node_add(
-                x=x, edge_index=edge_index, batch=batch,
-                add_ratio=self.cons_node_add_ratio,
-                k_connect=self.cons_node_add_k,
-                mode=self.cons_node_add_mode
-            )
+    def _cf_label_necessity_losses(
+        self,
+        logits_drop: torch.Tensor,   # main head on G_dropC, shape (B,C) or (B,1)
+        target: torch.Tensor,        # (B,) or (B,1), int labels for CE-style refs
+        num_classes: int,
+        # toggles/weights (all >= 0)
+        w_entropy: float = 0.0,          # NON-NEGATIVE: uses entropy deficit = logC - H(p_drop)
+        w_kl_uniform: float = 0.0,       # NON-NEGATIVE: KL(p_drop || uniform)
+        w_true_hinge_prob: float = 0.0,  # NON-NEGATIVE: hinge on true-class probability
+        w_true_hinge_logit: float = 0.0, # NON-NEGATIVE: hinge on true-class logit
+        w_one_minus_true: float = 0.0,   # NON-NEGATIVE: -log(1 - p_y_drop)
+        # thresholds / margins
+        tau_prob: float = 0.3,           # target max prob for true class (0.2–0.4 good)
+        tau_logit: float = 0.0,          # ~logit(0.5)=0
+        reduction: str = "mean",
+        eps: float = 1e-8,
+    ):
+        """
+        Returns dict with individual necessity components (all >= 0) and 'loss_nec' (weighted sum).
+        NOTE: 'w_entropy' now weights an entropy-deficit term (logC - H), which is >= 0.
+            'w_entropy' and 'w_kl_uniform' are redundant surrogates; usually enable ONE.
+        """
+        # ---- normalize shapes ----
+        if logits_drop.dim() == 1:
+            logits_drop = logits_drop.unsqueeze(1)
+        B, C_infer = logits_drop.shape
+        C = num_classes if num_classes is not None else C_infer
+        binary_single_logit = (C == 1 and logits_drop.size(1) == 1)
+
+        # targets
+        if target.dim() == 2 and target.size(1) == 1:
+            target = target[:, 0]
+        tgt_long = target.long().view(-1)
+
+        # probabilities on drop (and a multiclass-style logits tensor for hinges)
+        if binary_single_logit:
+            p_pos = torch.sigmoid(logits_drop.squeeze(-1)).clamp(eps, 1 - eps)    # (B,)
+            p_drop = torch.stack([1 - p_pos, p_pos], dim=-1)                      # (B,2)
+            logits_drop_mc = torch.stack([torch.zeros_like(p_pos), logits_drop.squeeze(-1)], dim=-1)  # (B,2)
+            C_eff = 2
+            tgt_for_mc = tgt_long.clamp(0, 1)
         else:
-            x_aug, edge_index_aug, batch_aug = x, edge_index, batch
+            p_drop = F.softmax(logits_drop, dim=-1).clamp_min(eps)                # (B,C)
+            logits_drop_mc = logits_drop
+            C_eff = p_drop.size(1)
+            tgt_for_mc = tgt_long
 
-        # Apply per-expert light feature augmentation to ALL nodes
-        x_aug = self._apply_light_aug(x_aug, self.aug_policies[k])
+        # --- components (ALL NON-NEGATIVE) ---
+        # (1) Entropy deficit: logC - H(p_drop)  >= 0
+        ent = -(p_drop * p_drop.log()).sum(dim=-1)                    # H >= 0
+        logC = math.log(C_eff)
+        loss_entropy = (logC - ent).clamp_min(0.0)
+        loss_entropy = loss_entropy.mean() if reduction == "mean" else loss_entropy.sum()
 
-        # --- Recompute masks on augmented graph (shapes differ) ---
-        Z_aug = self.causal_encoder(x_aug, edge_index_aug, batch=batch_aug)
-        edge_feat_aug = torch.cat([Z_aug[edge_index_aug[0]], Z_aug[edge_index_aug[1]]], dim=1)
-        node_mask_logits_aug = self.expert_node_masks[k](Z_aug)
-        edge_mask_logits_aug = self.expert_edge_masks[k](edge_feat_aug)
-        feat_mask_logits_aug = self.expert_feat_masks[k](Z_aug)
-        node_m_aug = self._hard_concrete_mask(node_mask_logits_aug, temperature=0.1, is_eval=False)
-        edge_m_aug = self._hard_concrete_mask(edge_mask_logits_aug, temperature=0.1, is_eval=False).view(-1)
-        feat_m_aug = self._hard_concrete_mask(feat_mask_logits_aug, temperature=0.1, is_eval=False)
+        # (2) KL(p_drop || uniform) >= 0
+        uni = torch.full_like(p_drop, 1.0 / C_eff)
+        loss_kl_uniform = (p_drop * (p_drop / uni).log()).sum(dim=-1)
+        loss_kl_uniform = loss_kl_uniform.mean() if reduction == "mean" else loss_kl_uniform.sum()
 
-        # Encode invariant subgraph on augmented graph (mirror weak path)
-        masked_x_aug = (x_aug * node_m_aug) * feat_m_aug
-        Z_lc_aug = self.lc_encoders[k](
-            masked_x_aug, edge_index_aug, batch=batch_aug, edge_weight=edge_m_aug
+        # helper to extract true-class values
+        idx = torch.arange(B, device=logits_drop_mc.device)
+
+        # (3) Hinge on true-class probability: max(0, p_y_drop - tau_prob) >= 0
+        py_drop = p_drop[idx, tgt_for_mc]
+        loss_true_hinge_prob = torch.relu(py_drop - tau_prob)
+        loss_true_hinge_prob = loss_true_hinge_prob.mean() if reduction == "mean" else loss_true_hinge_prob.sum()
+
+        # (4) Hinge on true-class logit: max(0, logit_y_drop - tau_logit) >= 0
+        ly_drop = logits_drop_mc[idx, tgt_for_mc]
+        loss_true_hinge_logit = torch.relu(ly_drop - tau_logit)
+        loss_true_hinge_logit = loss_true_hinge_logit.mean() if reduction == "mean" else loss_true_hinge_logit.sum()
+
+        # (5) One-minus-true: -log(1 - p_y_drop) >= 0
+        loss_one_minus_true = -(1 - py_drop).clamp_min(eps).log()
+        loss_one_minus_true = loss_one_minus_true.mean() if reduction == "mean" else loss_one_minus_true.sum()
+
+        # weighted sum (lower is better; all components >= 0)
+        loss_nec = (
+            w_entropy         * loss_entropy +
+            w_kl_uniform      * loss_kl_uniform +
+            w_true_hinge_prob * loss_true_hinge_prob +
+            w_true_hinge_logit* loss_true_hinge_logit +
+            w_one_minus_true  * loss_one_minus_true
         )
-        if self.global_pooling == 'mean':
-            hC_aug = global_mean_pool(Z_lc_aug, batch_aug)
-        elif self.global_pooling == 'sum':
-            hC_aug = global_add_pool(Z_lc_aug, batch_aug)
-        logits_aug = self.expert_classifiers[k](hC_aug)
 
-        # KL(p_weak || p_aug) at temperature T
-        T = self.consistency_T
-        p_w = F.softmax(logits_k.detach() / T, dim=1)
-        log_p_s = F.log_softmax(logits_aug / T, dim=1)
-        cons = F.kl_div(log_p_s, p_w, reduction='batchmean') * (T * T)
-
-        return cons
-    
-
-    def _apply_light_aug(self, x: torch.Tensor, policy: dict) -> torch.Tensor:
-        """
-        Node-preserving feature augmentation:
-          - per-feature dropout
-          - small Gaussian jitter
-        """
-        x_aug = x
-        p = float(policy.get("feat_drop", 0.0))
-        if p > 0.0:
-            m = (torch.rand_like(x_aug) > p).float()
-            x_aug = x_aug * m
-        s = float(policy.get("jitter_std", 0.0))
-        if s > 0.0:
-            x_aug = x_aug + torch.randn_like(x_aug) * s
-        return x_aug
-
-    @torch.no_grad()
-    def _augment_node_add(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor,
-                          add_ratio: float = 0.10, k_connect: int = 2, mode: str = "noise"):
-        """
-        Add new nodes per graph in the batch and connect each new node to k random existing nodes
-        within the same graph. Returns (x_aug, edge_index_aug, batch_aug).
-        """
-        device = x.device
-        N, F = x.size()
-        num_graphs = int(batch.max().item()) + 1
-
-        # First pass: decide how many nodes to add per-graph and sample features
-        add_counts = []
-        new_x_chunks = []
-        new_batch_chunks = []
-        for g in range(num_graphs):
-            idx = (batch == g).nonzero(as_tuple=False).view(-1)
-            n_g = int(idx.numel())
-            n_add = int(max(0, math.ceil(add_ratio * n_g)))
-            add_counts.append(n_add)
-            if n_add == 0:
-                continue
-            x_g = x[idx]
-            if mode == "sample" and n_g > 0:
-                perm = torch.randint(0, n_g, (n_add,), device=device)
-                new_x = x_g[perm].clone()
-            else:
-                mu = x_g.mean(dim=0, keepdim=True) if n_g > 0 else torch.zeros(1, F, device=device)
-                std = x_g.std(dim=0, unbiased=False, keepdim=True) if n_g > 0 else torch.ones(1, F, device=device)
-                new_x = mu + std * torch.randn(n_add, F, device=device)
-            new_x_chunks.append(new_x)
-            new_batch_chunks.append(torch.full((n_add,), g, dtype=batch.dtype, device=device))
-
-        total_add = sum(add_counts)
-        if total_add == 0:
-            return x, edge_index, batch
-
-        x_new = torch.cat(new_x_chunks, dim=0)
-        batch_new = torch.cat(new_batch_chunks, dim=0)
-
-        # Second pass: build edges from new nodes to existing nodes in the same graph
-        new_edges_src = []
-        new_edges_dst = []
-        offset = 0
-        new_node_start = N
-        for g in range(num_graphs):
-            n_add = add_counts[g]
-            if n_add == 0:
-                continue
-            idx = (batch == g).nonzero(as_tuple=False).view(-1)
-            n_g = int(idx.numel())
-            # global ids for the new nodes of graph g
-            new_ids = torch.arange(new_node_start + offset, new_node_start + offset + n_add, device=device)
-            # connect each new node to k random existing nodes in graph g
-            if n_g > 0:
-                tgt = idx[torch.randint(0, n_g, (n_add, max(1, k_connect)), device=device)]
-                # undirected (add both directions)
-                for j in range(n_add):
-                    for t in tgt[j]:
-                        new_edges_src.append(new_ids[j])
-                        new_edges_dst.append(t)
-                        new_edges_src.append(t)
-                        new_edges_dst.append(new_ids[j])
-            offset += n_add
-
-        if len(new_edges_src) > 0:
-            new_edges = torch.stack([torch.tensor(new_edges_src, device=device),
-                                     torch.tensor(new_edges_dst, device=device)], dim=0)
-            edge_index_aug = torch.cat([edge_index, new_edges], dim=1)
-        else:
-            edge_index_aug = edge_index
-
-        x_aug = torch.cat([x, x_new], dim=0)
-        batch_aug = torch.cat([batch, batch_new], dim=0)
-        return x_aug, edge_index_aug, batch_aug
+        return {
+            'loss_nec': loss_nec,
+            'nec_entropy': loss_entropy,                     # entropy deficit (>= 0)
+            'nec_kl_uniform': loss_kl_uniform,              # (>= 0)
+            'nec_true_hinge_prob': loss_true_hinge_prob,    # (>= 0)
+            'nec_true_hinge_logit': loss_true_hinge_logit,  # (>= 0)
+            'nec_one_minus_true': loss_one_minus_true,      # (>= 0)
+            'binary_single_logit': binary_single_logit,
+        }
     
     def _encode_complement_subgraph(
         self,
