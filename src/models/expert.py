@@ -201,7 +201,7 @@ class Experts(nn.Module):
 
         # Structural invariance (live) weight ramp (after warmup)
         if epoch < self.strinv_warmup_epochs:
-            self._weight_str_live = 0.0
+            self._weight_str = 0.0
         else:
             p = min((epoch - self.strinv_warmup_epochs) / max(self.strinv_ramp_epochs, 1), 1.0)
             self._weight_str_live = float(self.weight_str_end * p)
@@ -339,7 +339,7 @@ class Experts(nn.Module):
                 if not is_eval:
                     # Semantic invariance: VIB on h_C + LA on residual
 
-                    if self.weight_la > 0:
+                    if self._lambda_L > 0:
                         h_spur = self._encode_complement_subgraph(
                             data=data,
                             node_mask=node_mask,           # (N,1) or (N,)
@@ -365,7 +365,7 @@ class Experts(nn.Module):
                         la = hC_k.new_tensor(0.0)
                         ea = hC_k.new_tensor(0.0)
 
-                    if self.weight_str > 0:
+                    if self.weight_str_live > 0:
                         # Encode complement (spur) with the per‑expert LC encoder,
                         # but freeze that encoder for the necessity pass.
                         with self._frozen_params(self.lc_encoders[0], freeze_bn_running_stats=True):
