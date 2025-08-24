@@ -323,10 +323,8 @@ class Experts(nn.Module):
 
                 # Classification CE (class-weighted)
                 # print(f"self.num_classes: {self.num_classes}, self.metric: {self.metric}")
-                if self.num_classes == 1 and self.metric == 'MAE':
+                if self.metric == 'MAE':
                     ce = self._reg(logits_k, target)
-                elif self.num_classes == 1 and self.metric != 'MAE':
-                    ce = self._bce(logits_k, target)
                 else:
                     ce = self._ce(logits_k, target)
                 ce_list.append(ce)
@@ -340,27 +338,32 @@ class Experts(nn.Module):
 
                 if not is_eval:
                     # Semantic invariance: VIB on h_C + LA on residual
-                    h_spur = self._encode_complement_subgraph(
-                        data=data,
-                        node_mask=node_mask,           # (N,1) or (N,)
-                        edge_mask=edge_mask.view(-1),  # (E,)
-                        feat_mask=feat_mask,           # (N,F) or (F,)
-                        encoder=self.la_encoders[k],
-                        symmetrize=False,              # set True if you want undirected EW averaging
-                    )
 
-                    ea = self._causal_loss(
-                        h_masked=hC_k,
-                        h_ea=h_ea_list[:, k, :],
-                        expert_idx=k,
-                        env_labels=env_labels,
-                    )
+                    if self.weight_la > 0:
+                        h_spur = self._encode_complement_subgraph(
+                            data=data,
+                            node_mask=node_mask,           # (N,1) or (N,)
+                            edge_mask=edge_mask.view(-1),  # (E,)
+                            feat_mask=feat_mask,           # (N,F) or (F,)
+                            encoder=self.la_encoders[k],
+                            symmetrize=False,              # set True if you want undirected EW averaging
+                        )
 
-                    la = self._spur_loss(
-                        h_masked=hC_k,
-                        labels=target,
-                        h_spur=h_spur
-                    )
+                        ea = self._causal_loss(
+                            h_masked=hC_k,
+                            h_ea=h_ea_list[:, k, :],
+                            expert_idx=k,
+                            env_labels=env_labels,
+                        )
+
+                        la = self._spur_loss(
+                            h_masked=hC_k,
+                            labels=target,
+                            h_spur=h_spur
+                        )
+                    else:
+                        la = hC_k.new_tensor(0.0)
+                        ea = hC_k.new_tensor(0.0)
 
                     if self.weight_str > 0:
                         # Encode complement (spur) with the per‑expert LC encoder,
@@ -457,15 +460,6 @@ class Experts(nn.Module):
     
     def _reg(self, pred, target):
         return F.l1_loss(pred, target)
-    
-    def _bce(self, pred, target):
-        # pred: (B,) or (B,1)
-        # target: (B,) or (B,1)
-        if pred.dim() == 2 and pred.size(1) == 1:
-            pred = pred[:, 0]
-        if target.dim() == 2 and target.size(1) == 1:
-            target = target[:, 0]
-        return F.binary_cross_entropy_with_logits(pred, target.float(), reduction='none')  # (B,)
     
     def _diversity_loss(
         self,
