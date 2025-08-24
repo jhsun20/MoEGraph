@@ -365,7 +365,7 @@ class Experts(nn.Module):
                         la = hC_k.new_tensor(0.0)
                         ea = hC_k.new_tensor(0.0)
 
-                    if self.weight_str_live > 0:
+                    if self._weight_str_live > 0:
                         # Encode complement (spur) with the per‑expert LC encoder,
                         # but freeze that encoder for the necessity pass.
                         with self._frozen_params(self.lc_encoders[0], freeze_bn_running_stats=True):
