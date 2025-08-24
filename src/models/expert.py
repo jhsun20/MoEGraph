@@ -387,7 +387,7 @@ class Experts(nn.Module):
                             target=target,
                             num_classes=self.num_classes,           # 1 for single-logit binary; else C
                             # early training:
-                            w_entropy=0.2, w_kl_uniform=0.0, w_true_hinge_prob=0.0,
+                            w_entropy=1.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0,
                             # later add:
                             # w_true_hinge_prob=0.3, tau_prob=0.3
                             # or relative margin if you pass logits_full:
