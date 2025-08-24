@@ -8,6 +8,7 @@ from torch_geometric.nn import BatchNorm as PYG_BatchNorm  # for isinstance chec
 from models.gnn_models import GINEncoderWithEdgeWeight
 from torch_geometric.utils import to_undirected
 from torch_geometric.data import Data
+from contextlib import contextmanager
 import math
 
 
@@ -140,6 +141,8 @@ class Experts(nn.Module):
             for _ in range(self.num_experts)
         ])
 
+        # Label-adversarial head on semantic residual h_S
+        self.lbl_head_spur_sem = nn.Linear(hidden_dim, self.num_classes)
 
         # Per-expert maskers
         self.expert_node_masks = nn.ModuleList([
@@ -160,12 +163,7 @@ class Experts(nn.Module):
             nn.Linear(hidden_dim, self.num_classes) for _ in range(self.num_experts)
         ])
 
-        # Label-adversarial head on semantic residual h_S
-        self.lbl_head_spur_sem = nn.Linear(hidden_dim, self.num_classes)
 
-        # VIB heads on h_C (created lazily to bind H on first forward)
-        self.ib_mu_head_sem      = None
-        self.ib_logvar_head_sem  = None
 
         # Keep-rate priors (trainable) per expert for regularization
         self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
@@ -275,7 +273,7 @@ class Experts(nn.Module):
             edge_weight = edge_mask.view(-1)
 
             # LECI-style invariant head: tiny GIN -> mean pool
-            masked_Z_lc = self.lc_encoders[k](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+            masked_Z_lc = self.lc_encoders[0](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
             if self.global_pooling == 'mean':
                 h_stable = global_mean_pool(masked_Z_lc, batch)  # h_C
             elif self.global_pooling == 'sum':
@@ -285,7 +283,7 @@ class Experts(nn.Module):
             logit = self.expert_classifiers[k](h_stable)
 
             # Environment head: tiny GIN -> mean pool (for EA / environment inference)
-            masked_Z_ea = self.ea_encoders[k](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+            masked_Z_ea = self.ea_encoders[0](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
             if self.global_pooling == 'mean':
                 h_ea = global_mean_pool(masked_Z_ea, batch)
             elif self.global_pooling == 'sum':
@@ -365,22 +363,28 @@ class Experts(nn.Module):
                     )
 
                     if self.weight_str > 0:
-                        h_drop_main = self._encode_complement_subgraph(
-                            data=data,
-                            node_mask=node_mask,                 # masks computed for expert k above
-                            edge_mask=edge_mask.view(-1),
-                            feat_mask=feat_mask,
-                            encoder=self.lc_encoders[k],         # <-- main (invariant) encoder, not LA encoder
-                            symmetrize=False,
-                        )
-                        logits_drop_main = self.expert_classifiers[k](h_drop_main)
+                        # Encode complement (spur) with the per‑expert LC encoder,
+                        # but freeze that encoder for the necessity pass.
+                        with self._frozen_params(self.lc_encoders[0], freeze_bn_running_stats=True):
+                            h_drop_main = self._encode_complement_subgraph(
+                                data=data,
+                                node_mask=node_mask,                 # masks computed for expert k above
+                                edge_mask=edge_mask.view(-1),
+                                feat_mask=feat_mask,
+                                encoder=self.lc_encoders[0],         # <-- stays the same
+                                symmetrize=False,
+                            )
+
+                        # Pass through the per‑expert classifier head, also frozen for necessity.
+                        with self._frozen_params(self.expert_classifiers[k], freeze_bn_running_stats=True):
+                            logits_drop_main = self.expert_classifiers[k](h_drop_main)
 
                         nec_loss = self._cf_label_necessity_losses(
                             logits_drop=logits_drop_main,
                             target=target,
                             num_classes=self.num_classes,           # 1 for single-logit binary; else C
                             # early training:
-                            w_entropy=0.2, w_kl_uniform=0.0, w_true_hinge_prob=0.1,
+                            w_entropy=1.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0,
                             # later add:
                             # w_true_hinge_prob=0.3, tau_prob=0.3
                             # or relative margin if you pass logits_full:
@@ -982,6 +986,27 @@ class Experts(nn.Module):
         if verbose:
             aff = " + affine" if freeze_affine else ""
             print(f"[Experts] Frozen {bn_count} BatchNorm layers (running stats{aff}).")
+
+    @contextmanager
+    def _frozen_params(self, module: nn.Module, freeze_bn_running_stats: bool = True):
+        """
+        Temporarily sets requires_grad=False for all params in `module` so its
+        weights won't update, while still allowing gradients to flow to the inputs.
+        If `freeze_bn_running_stats=True`, switch the module to eval() for the block
+        so BN running stats (and dropout) are not affected by the spur view.
+        """
+        was_training = module.training
+        if freeze_bn_running_stats:
+            module.eval()
+        saved = [p.requires_grad for p in module.parameters()]
+        for p in module.parameters():
+            p.requires_grad_(False)
+        try:
+            yield
+        finally:
+            for p, rg in zip(module.parameters(), saved):
+                p.requires_grad_(rg)
+            module.train(was_training)
 
 
 def mask_symmetry_report(edge_index: torch.Tensor,
