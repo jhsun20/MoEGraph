@@ -345,7 +345,7 @@ class Experts(nn.Module):
                             node_mask=node_mask,           # (N,1) or (N,)
                             edge_mask=edge_mask.view(-1),  # (E,)
                             feat_mask=feat_mask,           # (N,F) or (F,)
-                            encoder=self.la_encoders[k],
+                            encoder=self.la_encoders[0],
                             symmetrize=False,              # set True if you want undirected EW averaging
                         )
 
@@ -394,6 +394,36 @@ class Experts(nn.Module):
                             # logits_full=logits_full_main, w_rel_margin=0.3, rel_margin=1.0
                             )
                         str_loss = nec_loss['loss_nec']
+
+                        # EA ENCODER SHOULD BE GOOD AT PREDICTING ENVIRONMENT FROM SPURIOUS GRAPH
+                        with self._frozen_params(self.ea_encoders[0], freeze_bn_running_stats=True):
+                            h_spur2 = self._encode_complement_subgraph(
+                                data=data,
+                                node_mask=node_mask,           # (N,1) or (N,)
+                                edge_mask=edge_mask.view(-1),  # (E,)
+                                feat_mask=feat_mask,           # (N,F) or (F,)
+                                encoder=self.ea_encoders[0],
+                                symmetrize=False,              # set True if you want undirected EW averaging
+                            )
+
+                        with self._frozen_params(self.ea_classifiers[0], freeze_bn_running_stats=True):
+                            logits_drop_env = self.ea_classifiers[0](h_spur2)
+
+                        nec_loss_spur = self._cf_label_necessity_losses(
+                            logits_drop=logits_drop_env,
+                            target=env_labels,
+                            num_classes=self.num_envs,           # 1 for single-logit binary; else C
+                            # early training:
+                            w_entropy=1.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0,
+                            # later add:
+                            # w_true_hinge_prob=0.3, tau_prob=0.3
+                            # or relative margin if you pass logits_full:
+                            # logits_full=logits_full_main, w_rel_margin=0.3, rel_margin=1.0
+                            )
+                        str_loss_spur = nec_loss_spur['loss_nec']
+
+                        str_loss = str_loss + str_loss_spur
+
                     else:
                         str_loss = hC_k.new_tensor(0.0)
 
@@ -612,9 +642,6 @@ class Experts(nn.Module):
         expert_idx: Optional[int] = None,
         env_labels: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """
-        VIB on h_C + LA on residual h_S = (h_orig - h_C) to discourage label signal in spur part.
-        """
         device = h_masked.device
         B, H = h_masked.shape
 
@@ -645,7 +672,7 @@ class Experts(nn.Module):
                                 f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
             # 3) adversarial logits (GRL applies the reversed grad only to features)
             h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
-            logits_E = self.ea_classifiers[expert_idx](h_ea_adv)   # (B, num_envs)
+            logits_E = self.ea_classifiers[0](h_ea_adv)   # (B, num_envs)
             if logits_E.size(1) != self.num_envs:
                 raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
             # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
@@ -850,7 +877,7 @@ class Experts(nn.Module):
         feat_m_S = 1.0 - feat_m                              # (N,F)
 
         # --- apply to features (node-wise * feature-wise) ---
-        x_spur = (x * node_m_S) * feat_m_S                   # (N,F)
+        x_spur = (x * node_m_S) # * feat_m_S                   # (N,F)
 
         # --- optional symmetrization of edge weights for undirected graphs ---
         ei, ew_spur = edge_index, edge_m_S
