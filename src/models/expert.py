@@ -409,20 +409,11 @@ class Experts(nn.Module):
                         with self._frozen_params(self.ea_classifiers[0], freeze_bn_running_stats=True):
                             logits_drop_env = self.ea_classifiers[0](h_spur2)
 
-                        nec_loss_spur = self._cf_label_necessity_losses(
-                            logits_drop=logits_drop_env,
-                            target=env_labels,
-                            num_classes=self.num_envs,           # 1 for single-logit binary; else C
-                            # early training:
-                            w_entropy=1.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0,
-                            # later add:
-                            # w_true_hinge_prob=0.3, tau_prob=0.3
-                            # or relative margin if you pass logits_full:
-                            # logits_full=logits_full_main, w_rel_margin=0.3, rel_margin=1.0
-                            )
-                        str_loss_spur = nec_loss_spur['loss_nec']
+                        spur_ce = self._ce(logits_drop_env, env_labels)
+                        print(f"str_loss: {str_loss}, spur_ce: {spur_ce}")
+                        str_loss = str_loss + spur_ce
 
-                        str_loss = str_loss + str_loss_spur
+                        
 
                     else:
                         str_loss = hC_k.new_tensor(0.0)
