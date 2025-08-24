@@ -409,8 +409,8 @@ class Experts(nn.Module):
                         with self._frozen_params(self.ea_classifiers[0], freeze_bn_running_stats=True):
                             logits_drop_env = self.ea_classifiers[0](h_spur2)
 
-                        spur_ce = self._ce(logits_drop_env, env_labels)
-                        print(f"str_loss: {str_loss}, spur_ce: {spur_ce}")
+                        spur_ce = 0.1 * self._ce(logits_drop_env, env_labels)
+                        #print(f"str_loss: {str_loss}, spur_ce: {spur_ce}")
                         str_loss = str_loss + spur_ce
 
                         
