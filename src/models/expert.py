@@ -386,19 +386,19 @@ class Experts(nn.Module):
                     if self._weight_str_live > 0:
                         # Encode complement (spur) with the per‑expert LC encoder,
                         # but freeze that encoder for the necessity pass.
-                        with self._frozen_params(self.lc_encoders[0], freeze_bn_running_stats=True):
-                            h_drop_main = self._encode_complement_subgraph(
-                                data=data,
-                                node_mask=node_mask,                 # masks computed for expert k above
-                                edge_mask=edge_mask.view(-1),
-                                feat_mask=feat_mask,
-                                encoder=self.lc_encoders[0],         # <-- stays the same
-                                symmetrize=False,
-                            )
+                        #with self._frozen_params(self.lc_encoders[0], freeze_bn_running_stats=True):
+                        h_drop_main = self._encode_complement_subgraph(
+                            data=data,
+                            node_mask=node_mask,                 # masks computed for expert k above
+                            edge_mask=edge_mask.view(-1),
+                            feat_mask=feat_mask,
+                            encoder=self.lc_encoders[0],         # <-- stays the same
+                            symmetrize=False,
+                        )
 
                         # Pass through the per‑expert classifier head, also frozen for necessity.
-                        with self._frozen_params(self.expert_classifiers[k], freeze_bn_running_stats=True):
-                            logits_drop_main = self.expert_classifiers[k](h_drop_main)
+                        # with self._frozen_params(self.expert_classifiers[k], freeze_bn_running_stats=True):
+                        logits_drop_main = self.expert_classifiers[k](h_drop_main)
 
                         nec_loss = self._cf_label_necessity_losses(
                             logits_drop=logits_drop_main,
@@ -446,16 +446,16 @@ class Experts(nn.Module):
                         masked_x = x * node_mask_k
                         edge_weight = edge_mask_k.view(-1)
 
-                        with self._frozen_params(self.ea_encoders[0], freeze_bn_running_stats=True):
-                            h_stable_env_k = self.ea_encoders[0](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+                        #with self._frozen_params(self.ea_encoders[0], freeze_bn_running_stats=True):
+                        h_stable_env_k = self.ea_encoders[0](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
                         
                         if self.global_pooling == 'mean':
                             h_stable_env_k = global_mean_pool(h_stable_env_k, batch)
                         elif self.global_pooling == 'sum':
                             h_stable_env_k = global_add_pool(h_stable_env_k, batch)
 
-                        with self._frozen_params(self.ea_classifiers[k], freeze_bn_running_stats=True):
-                            logits_stable_env = self.ea_classifiers[k](h_stable_env_k)
+                        #with self._frozen_params(self.ea_classifiers[k], freeze_bn_running_stats=True):
+                        logits_stable_env = self.ea_classifiers[k](h_stable_env_k)
 
                         nec_loss = self._cf_label_necessity_losses(
                             logits_drop=logits_stable_env,
