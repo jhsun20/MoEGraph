@@ -273,6 +273,8 @@ class Experts(nn.Module):
             edge_weight = edge_mask.view(-1)
 
             # LECI-style invariant head: tiny GIN -> mean pool
+
+
             masked_Z_lc = self.lc_encoders[0](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
             if self.global_pooling == 'mean':
                 h_stable = global_mean_pool(masked_Z_lc, batch)  # h_C
@@ -320,6 +322,9 @@ class Experts(nn.Module):
             for k in range(self.num_experts):
                 logits_k = expert_logits[:, k, :]
                 hC_k     = h_stable_list[:, k, :]
+                node_mask_k = node_masks[:, k, :]
+                edge_mask_k = edge_masks[:, k, :]
+                feat_mask_k = feat_masks[:, k, :]
 
                 # Classification CE (class-weighted)
                 # print(f"self.num_classes: {self.num_classes}, self.metric: {self.metric}")
@@ -327,6 +332,7 @@ class Experts(nn.Module):
                     ce = self._reg(logits_k, target)
                 else:
                     ce = self._ce(logits_k, target)
+
                 ce_list.append(ce)
 
                 # Mask regularization (per-graph keep-rate prior)
@@ -340,27 +346,39 @@ class Experts(nn.Module):
                     # Semantic invariance: VIB on h_C + LA on residual
 
                     if self._lambda_L > 0:
+                        # h_spur = self._encode_complement_subgraph(
+                        #     data=data,
+                        #     node_mask=node_mask,           # (N,1) or (N,)
+                        #     edge_mask=edge_mask.view(-1),  # (E,)
+                        #     feat_mask=feat_mask,           # (N,F) or (F,)
+                        #     encoder=self.la_encoders[0],
+                        #     symmetrize=False,              # set True if you want undirected EW averaging
+                        # )
+
+                        # ea = self._causal_loss(
+                        #     h_masked=hC_k,
+                        #     h_ea=h_ea_list[:, k, :],
+                        #     expert_idx=k,
+                        #     env_labels=env_labels,
+                        # )
+
+                        # la = self._spur_loss(
+                        #     h_masked=hC_k,
+                        #     labels=target,
+                        #     h_spur=h_spur
+                        # )
+                        la = hC_k.new_tensor(0.0)
                         h_spur = self._encode_complement_subgraph(
-                            data=data,
-                            node_mask=node_mask,           # (N,1) or (N,)
-                            edge_mask=edge_mask.view(-1),  # (E,)
-                            feat_mask=feat_mask,           # (N,F) or (F,)
-                            encoder=self.la_encoders[0],
-                            symmetrize=False,              # set True if you want undirected EW averaging
-                        )
+                                data=data,
+                                node_mask=node_mask,           # (N,1) or (N,)
+                                edge_mask=edge_mask.view(-1),  # (E,)
+                                feat_mask=feat_mask,           # (N,F) or (F,)
+                                encoder=self.ea_encoders[0],
+                                symmetrize=False,              # set True if you want undirected EW averaging
+                            )
+                        logits_spurs_env = self.ea_classifiers[k](h_spur)
+                        ea = self._ce(logits_spurs_env, env_labels)
 
-                        ea = self._causal_loss(
-                            h_masked=hC_k,
-                            h_ea=h_ea_list[:, k, :],
-                            expert_idx=k,
-                            env_labels=env_labels,
-                        )
-
-                        la = self._spur_loss(
-                            h_masked=hC_k,
-                            labels=target,
-                            h_spur=h_spur
-                        )
                     else:
                         la = hC_k.new_tensor(0.0)
                         ea = hC_k.new_tensor(0.0)
@@ -396,27 +414,65 @@ class Experts(nn.Module):
                         str_loss = nec_loss['loss_nec']
 
                         # EA ENCODER SHOULD BE GOOD AT PREDICTING ENVIRONMENT FROM SPURIOUS GRAPH
+                        # with self._frozen_params(self.ea_encoders[0], freeze_bn_running_stats=True):
+                        #     h_spur2 = self._encode_complement_subgraph(
+                        #         data=data,
+                        #         node_mask=node_mask,           # (N,1) or (N,)
+                        #         edge_mask=edge_mask.view(-1),  # (E,)
+                        #         feat_mask=feat_mask,           # (N,F) or (F,)
+                        #         encoder=self.ea_encoders[0],
+                        #         symmetrize=False,              # set True if you want undirected EW averaging
+                        #     )
+
+                        # with self._frozen_params(self.ea_classifiers[0], freeze_bn_running_stats=True):
+                        #     logits_drop_env = self.ea_classifiers[0](h_spur2)
+
+                        # spur_ce = 0.1 * self._ce(logits_drop_env, env_labels)
+                        # #print(f"str_loss: {str_loss}, spur_ce: {spur_ce}")
+                        # str_loss = str_loss + spur_ce
+
+                        # Accumulate incident "on" edges per node
+                        N = x.size(0)
+                        inc = node_mask_k.new_zeros(N)               # float tensor
+                        inc.index_add_(0, src, e_on)
+                        inc.index_add_(0, dst, e_on)
+
+                        # Any node with at least one kept edge must be on
+                        n_force = (inc > 0).float().view(-1, 1)    # (N,1)
+                        node_mask_k = torch.maximum(node_mask_k, n_force)
+
+                        # Apply masks
+                        # masked_x = x * node_mask * feat_mask  # (N, D)
+                        masked_x = x * node_mask_k
+                        edge_weight = edge_mask_k.view(-1)
+
                         with self._frozen_params(self.ea_encoders[0], freeze_bn_running_stats=True):
-                            h_spur2 = self._encode_complement_subgraph(
-                                data=data,
-                                node_mask=node_mask,           # (N,1) or (N,)
-                                edge_mask=edge_mask.view(-1),  # (E,)
-                                feat_mask=feat_mask,           # (N,F) or (F,)
-                                encoder=self.ea_encoders[0],
-                                symmetrize=False,              # set True if you want undirected EW averaging
-                            )
-
-                        with self._frozen_params(self.ea_classifiers[0], freeze_bn_running_stats=True):
-                            logits_drop_env = self.ea_classifiers[0](h_spur2)
-
-                        spur_ce = 0.1 * self._ce(logits_drop_env, env_labels)
-                        #print(f"str_loss: {str_loss}, spur_ce: {spur_ce}")
-                        str_loss = str_loss + spur_ce
-
+                            h_stable_env_k = self.ea_encoders[0](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
                         
+                        if self.global_pooling == 'mean':
+                            h_stable_env_k = global_mean_pool(h_stable_env_k, batch)
+                        elif self.global_pooling == 'sum':
+                            h_stable_env_k = global_add_pool(h_stable_env_k, batch)
+
+                        with self._frozen_params(self.ea_classifiers[k], freeze_bn_running_stats=True):
+                            logits_stable_env = self.ea_classifiers[k](h_stable_env_k)
+
+                        nec_loss = self._cf_label_necessity_losses(
+                            logits_drop=logits_stable_env,
+                            target=env_labels,
+                            num_classes=self.num_envs,           # 1 for single-logit binary; else C
+                            # early training:
+                            w_entropy=0.1, w_kl_uniform=0.0, w_true_hinge_prob=0.0,
+                            # later add:
+                            # w_true_hinge_prob=0.3, tau_prob=0.3
+                            # or relative margin if you pass logits_full:
+                            # logits_full=logits_full_main, w_rel_margin=0.3, rel_margin=1.0
+                            )
+                        la = nec_loss['loss_nec']
 
                     else:
                         str_loss = hC_k.new_tensor(0.0)
+                        la = hC_k.new_tensor(0.0)
 
                 else:
                     la = hC_k.new_tensor(0.0)
