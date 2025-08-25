@@ -298,39 +298,54 @@ class Experts(nn.Module):
                 reg_list.append(reg)
 
                 if not is_eval:
-
-                    if self._lambda_L > 0:
-                        h_spur = self._encode_complement_subgraph(
+                    h_spur_env = self._encode_complement_subgraph(
                                 data=data,
                                 node_mask=node_mask,           # (N,1) or (N,)
                                 edge_mask=edge_mask.view(-1),  # (E,)
-                                encoder=self.label_classifier_encoder,
+                                encoder=self.env_classifier_encoder,
                                 symmetrize=False,              # set True if you want undirected EW averaging
                             )
-                        la = self._spur_loss(
-                            h_masked=hC_k,
-                            labels=target,
-                            h_spur=h_spur,
-                            expert_idx=k
-                        )
+                    spur_env_logits = self.expert_env_classifiers[k](h_spur_env)
+                    ce_env = self._ce(spur_env_logits, env_labels)
+                    ce_list[-1] += ce_env
+
+                    if self._lambda_L > 0:
+                        with self._frozen_params(self.classifier_encoder, freeze_bn_running_stats=True):
+                            h_spur = self._encode_complement_subgraph(
+                                    data=data,
+                                    node_mask=node_mask,           # (N,1) or (N,)
+                                    edge_mask=edge_mask.view(-1),  # (E,)
+                                    encoder=self.classifier_encoder,
+                                    symmetrize=False,              # set True if you want undirected EW averaging
+                                )
+                                
+                        with self._frozen_params(self.expert_classifiers[k], freeze_bn_running_stats=True):
+                            la = self._spur_loss(
+                                h_masked=hC_k,
+                                labels=target,
+                                h_spur=h_spur,
+                                expert_idx=k
+                            )
                     else:
                         la = hC_k.new_tensor(0.0)
 
                     if self._lambda_E > 0:
                         masked_x_k = x * node_mask_k
                         edge_weight_k = edge_mask_k.view(-1)
-                        h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, batch=batch, edge_weight=edge_weight_k)
+                        with self._frozen_params(self.env_classifier_encoder, freeze_bn_running_stats=True):
+                            h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, batch=batch, edge_weight=edge_weight_k)
                         if self.global_pooling == 'mean':
                             h_stable_env_k = global_mean_pool(h_stable_env_k, batch)
                         elif self.global_pooling == 'sum':
                             h_stable_env_k = global_add_pool(h_stable_env_k, batch)
 
-                        ea = self._causal_loss(
-                            h_masked=hC_k,
-                            h_ea=h_stable_env_k,
-                            expert_idx=k,
-                            env_labels=env_labels,
-                        )
+                        with self._frozen_params(self.expert_env_classifiers[k], freeze_bn_running_stats=True):
+                            ea = self._causal_loss(
+                                h_masked=hC_k,
+                                h_ea=h_stable_env_k,
+                                expert_idx=k,
+                                env_labels=env_labels,
+                            )
 
                     else:
                         ea = hC_k.new_tensor(0.0)
@@ -693,7 +708,7 @@ class Experts(nn.Module):
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
         la = h_masked.new_tensor(0.0)
         # ----- Classification head (existing path) -----
-        logits_y_spur = self.expert_label_classifiers[expert_idx](h_spur_adv)     # (B, num_classes)
+        logits_y_spur = self.expert_classifiers[expert_idx](h_spur_adv)     # (B, num_classes)
         la = F.cross_entropy(logits_y_spur, labels)
         return la
     
