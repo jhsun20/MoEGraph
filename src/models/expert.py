@@ -305,14 +305,14 @@ class Experts(nn.Module):
                 edge_mask_k = edge_masks[:, k, :]
                 # Classification CE (class-weighted)
                 # print(f"self.num_classes: {self.num_classes}, self.metric: {self.metric}")
-                ce = self._ce(logits_k, target)
+                ce = self._ce(logits_k, target) * self.weight_ce
                 ce_list.append(ce)
 
                 # Mask regularization (per-graph keep-rate prior)
                 reg = self._mask_reg(
                     node_masks[:, k, :], edge_masks[:, k, :],
                     node_batch=batch, edge_batch=batch[edge_index[0]], expert_idx=k
-                )
+                ) * self.weight_reg
                 reg_list.append(reg)
 
                 if not is_eval:
@@ -345,7 +345,7 @@ class Experts(nn.Module):
                                 expert_idx=k,
                                 edge_index=edge_index,
                                 batch=batch
-                            )
+                            ) * self._lambda_L
                     else:
                         la = hC_k.new_tensor(0.0)
 
@@ -353,7 +353,7 @@ class Experts(nn.Module):
                         masked_x_k = x * node_mask_k
                         edge_weight_k = edge_mask_k.view(-1)
                         with self._frozen_params(self.env_classifier_encoder, freeze_bn_running_stats=True):
-                            h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, batch=batch, edge_weight=edge_weight_k)
+                            h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch)
 
                         ea = self._causal_loss(
                             h_masked=hC_k,
@@ -362,7 +362,7 @@ class Experts(nn.Module):
                             env_labels=env_labels,
                             edge_index=edge_index,
                             batch=batch
-                        )
+                        ) * self._lambda_E
 
                     else:
                         ea = hC_k.new_tensor(0.0)
@@ -467,11 +467,7 @@ class Experts(nn.Module):
                 str_list.append(str_loss)
 
                 # Use live scheduled weight for structure (even though str_loss==0.0)
-                total = (self.weight_ce * ce +
-                         self.weight_reg * reg +
-                         self.weight_str * str_loss +
-                         self.weight_la * la +
-                         self.weight_ea * ea)
+                total = (ce + reg + str_loss + la + ea)
                 tot_list.append(total)
 
             # Diversity across experts' masks

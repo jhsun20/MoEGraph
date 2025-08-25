@@ -45,7 +45,7 @@ class MoE(nn.Module):
         gate_hidden    = config['gate']['hidden_dim']
         gate_depth     = config['gate']['depth']
         dropout        = config['model']['dropout']
-        self.gate_enc  = GINEncoderWithEdgeWeight(self.num_features, gate_hidden, gate_depth, dropout, train_eps=True, global_pooling='none')
+        self.gate_enc  = GINEncoderWithEdgeWeight(self.num_features, gate_hidden, gate_depth, dropout, train_eps=True, global)
         self.gate_mlp  = nn.Sequential(nn.Linear(gate_hidden, gate_hidden),
                                        nn.ReLU(),
                                        nn.Linear(gate_hidden, self.num_experts))
@@ -138,26 +138,20 @@ class MoE(nn.Module):
 
         # Diversity (already scalar); Load-balance on gate (optional)
         div = shared_out['loss_div']
-        load = self._load_balance(gate_probs)
+        load = self._load_balance(gate_probs) * self.weight_load
 
-        total = (self.weight_ce * ce +
-                 self.weight_reg * reg +
-                 self.weight_la * la +
-                 self.weight_ea * ea +
-                 self.weight_str * strl +
-                 self.weight_div * div +
-                 self.weight_load * load)
+        total = (ce + reg + la + ea + strl + div + load)
 
         return {
             'logits': agg_logits,
             'loss_total': total,
-            'loss_ce': ce * self.weight_ce,
-            'loss_reg': reg * self.weight_reg,
-            'loss_la': la * self.weight_la,
-            'loss_ea': ea * self.weight_ea,
-            'loss_str': strl * self.weight_str,
-            'loss_div': div * self.weight_div,
-            'loss_load': load * self.weight_load,
+            'loss_ce': ce,
+            'loss_reg': reg,
+            'loss_la': la,
+            'loss_ea': ea,
+            'loss_str': strl,
+            'loss_div': div,
+            'loss_load': load,
             'gate_weights': gate_probs,              # (B, K)
             'rho': shared_out['rho'],
             'expert_logits': expert_logits,         # (B, K, C)
