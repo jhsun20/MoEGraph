@@ -33,18 +33,18 @@ model:
   hidden_dim: 300
   num_layers: 3
   dropout: 0.5
-  pooling: "mean"  # Options: mean, sum, max
-  weight_str: 10.0
-  weight_la: 10.0
-  weight_ea: 0.1
+  global_pooling: "sum"  # Options: mean, sum, max
+  weight_str: 0.0
+  weight_la: 0.2
+  weight_ea: 0.2
   weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 0.5
+  weight_div: 1.0
   weight_load: 0.5
   num_experts: 6
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
-  adv_warmup_epochs: -1
-  adv_ramp_epochs: 1
+  adv_warmup_epochs: 15
+  adv_ramp_epochs: 20
   strinv_warmup_epochs: 1
   strinv_ramp_epochs: 1
 
@@ -70,8 +70,8 @@ logging:
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.5
+  entmax_alpha: 1.38
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 5
+  train_after: 20

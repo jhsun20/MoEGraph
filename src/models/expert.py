@@ -111,38 +111,28 @@ class Experts(nn.Module):
             self.num_features, hidden_dim, num_layers, dropout, train_eps=True
         )
 
-        # --- LECI-style tiny GINs for invariant (lc) and environment (ea) heads ---
-        tiny_lc_hidden = int(mcfg.get('leci_lc_hidden', hidden_dim))
-        tiny_ea_hidden = int(mcfg.get('leci_ea_hidden', hidden_dim))
-        tiny_la_hidden = int(mcfg.get('leci_la_hidden', hidden_dim))
-        tiny_depth     = int(mcfg.get('leci_depth', 3))
-        tiny_drop      = float(mcfg.get('leci_dropout', dropout))
-
-        # One tiny lc_gnn and ea_gnn per expert (keeps behavior closest to LECI while preserving MoE)
-        self.lc_encoders = nn.ModuleList([
-            GINEncoderWithEdgeWeight(self.num_features, tiny_lc_hidden, tiny_depth, tiny_drop, train_eps=True)
-            for _ in range(self.num_experts)
+        # Per-expert classifiers
+        self.expert_classifiers = nn.ModuleList([
+            nn.Linear(hidden_dim, self.num_classes) for _ in range(self.num_experts)
         ])
 
-        self.ea_encoders = nn.ModuleList([
-            GINEncoderWithEdgeWeight(self.num_features, tiny_ea_hidden, tiny_depth, tiny_drop, train_eps=True)
-            for _ in range(self.num_experts)
-        ])
-
-        # Per-expert EA classifier (predicts environment id)
         self.num_envs = dataset_info['num_envs']
-        self.ea_classifiers = nn.ModuleList([
-            nn.Sequential(nn.Linear(tiny_ea_hidden, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_envs)) for _ in range(self.num_experts)
+        self.env_classifier_encoder = GINEncoderWithEdgeWeight(
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
+        )
+        self.expert_env_classifiers = nn.ModuleList([
+            nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_envs)) for _ in range(self.num_experts)
         ])
 
         # --- LECI-style tiny GINs for the LA (spur/complement) branch ---
-        self.la_encoders = nn.ModuleList([
-            GINEncoderWithEdgeWeight(self.num_features, tiny_la_hidden, tiny_depth, tiny_drop, train_eps=True)
-            for _ in range(self.num_experts)
-        ])
+        self.label_classifier_encoder = GINEncoderWithEdgeWeight(
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
+        )
 
         # Label-adversarial head on semantic residual h_S
-        self.lbl_head_spur_sem = nn.Linear(hidden_dim, self.num_classes)
+        self.expert_label_classifiers = nn.ModuleList([
+            nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_classes)) for _ in range(self.num_experts)
+        ])
 
         # Per-expert maskers
         self.expert_node_masks = nn.ModuleList([
@@ -153,22 +143,10 @@ class Experts(nn.Module):
             nn.Sequential(nn.Linear(2 * hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
             for _ in range(self.num_experts)
         ])
-        self.expert_feat_masks = nn.ModuleList([
-            nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_features))
-            for _ in range(self.num_experts)
-        ])
-
-        # Per-expert classifiers
-        self.expert_classifiers = nn.ModuleList([
-            nn.Linear(hidden_dim, self.num_classes) for _ in range(self.num_experts)
-        ])
-
-
 
         # Keep-rate priors (trainable) per expert for regularization
         self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
         self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
-        self.rho_feat = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
 
         # print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
 
@@ -226,23 +204,22 @@ class Experts(nn.Module):
         Z = self.causal_encoder(x, edge_index, batch=batch)
         edge_feat = torch.cat([Z[edge_index[0]], Z[edge_index[1]]], dim=1)
 
-        node_masks, edge_masks, feat_masks = [], [], []
+        node_masks, edge_masks = [], []
         expert_logits, h_stable_list = [], []
-        h_ea_list = []
+        masked_x_list, edge_weights_list, edge_indexes_list, batches_list = [], [], [], []
+
 
         is_eval = not self.training
 
         for k in range(self.num_experts):
             node_mask_logits = self.expert_node_masks[k](Z)
             edge_mask_logits = self.expert_edge_masks[k](edge_feat)
-            feat_mask_logits = self.expert_feat_masks[k](Z)
 
             
             node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
             # Enforce symmetry for edges that have reverse edges
             edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
-            feat_mask = self._hard_concrete_mask(feat_mask_logits, self._mask_temp, is_eval=is_eval)
             # if k == 0:  # or pick any expert index you want to monitor
             #     report = mask_symmetry_report(edge_index, edge_mask.view(-1))
             #     print(f"[Symmetry check, Expert {k}] {report}")
@@ -265,42 +242,37 @@ class Experts(nn.Module):
 
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
-            feat_masks.append(feat_mask)
 
             # Apply masks
-            # masked_x = x * node_mask * feat_mask  # (N, D)
             masked_x = x * node_mask
             edge_weight = edge_mask.view(-1)
 
-            # LECI-style invariant head: tiny GIN -> mean pool
 
-
-            masked_Z_lc = self.lc_encoders[0](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+            masked_Z = self.classifier_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
             if self.global_pooling == 'mean':
-                h_stable = global_mean_pool(masked_Z_lc, batch)  # h_C
+                h_stable = global_mean_pool(masked_Z, batch)  # h_C
             elif self.global_pooling == 'sum':
-                h_stable = global_add_pool(masked_Z_lc, batch)  # h_C
+                h_stable = global_add_pool(masked_Z, batch)  # h_C
 
             # Classify with your existing per-expert classifier
             logit = self.expert_classifiers[k](h_stable)
 
-            # Environment head: tiny GIN -> mean pool (for EA / environment inference)
-            masked_Z_ea = self.ea_encoders[0](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
-            if self.global_pooling == 'mean':
-                h_ea = global_mean_pool(masked_Z_ea, batch)
-            elif self.global_pooling == 'sum':
-                h_ea = global_add_pool(masked_Z_ea, batch)
-
             h_stable_list.append(h_stable)
             expert_logits.append(logit)
-            h_ea_list.append(h_ea)
+            masked_x_list.append(masked_x)
+            edge_weights_list.append(edge_weight)
+            edge_indexes_list.append(edge_index)
+            batches_list.append(batch)
 
         node_masks    = torch.stack(node_masks, dim=1)        # (N, K, 1)
         edge_masks    = torch.stack(edge_masks, dim=1)        # (E, K, 1)
-        feat_masks    = torch.stack(feat_masks, dim=1)        # (N, K, D)
         expert_logits = torch.stack(expert_logits, dim=1)     # (B, K, C)
         h_stable_list = torch.stack(h_stable_list, dim=1)     # (B, K, H)
-        h_ea_list     = torch.stack(h_ea_list, dim=1)         # (B, K, Hea)
+        masked_x_list = torch.stack(masked_x_list, dim=1)     # (B, K, N, D)
+        edge_weights_list = torch.stack(edge_weights_list, dim=1)     # (B, K, E)
+        edge_indexes_list = torch.stack(edge_indexes_list, dim=1)     # (B, K, E, 2)
+        batches_list = torch.stack(batches_list, dim=1)     # (B, K)
+
         if self.global_pooling == 'mean':
             h_orig = global_mean_pool(Z, batch)            # (B, H)
         elif self.global_pooling == 'sum':
@@ -311,9 +283,8 @@ class Experts(nn.Module):
             'h_orig':   h_orig,
             'node_masks': node_masks,
             'edge_masks': edge_masks,
-            'feat_masks': feat_masks,
             'expert_logits': expert_logits,
-            'rho': [self.rho_node, self.rho_edge, self.rho_feat],
+            'rho': [self.rho_node, self.rho_edge]
         }
 
         if target is not None:
@@ -324,63 +295,54 @@ class Experts(nn.Module):
                 hC_k     = h_stable_list[:, k, :]
                 node_mask_k = node_masks[:, k, :]
                 edge_mask_k = edge_masks[:, k, :]
-                feat_mask_k = feat_masks[:, k, :]
+                masked_x_k = masked_x_list[:, k, :, :]
+                edge_weight_k = edge_weights_list[:, k, :]
+                edge_index_k = edge_indexes_list[:, k, :, :]
+                batch_k = batches_list[:, k, :]
 
                 # Classification CE (class-weighted)
                 # print(f"self.num_classes: {self.num_classes}, self.metric: {self.metric}")
-                if self.metric == 'MAE':
-                    ce = self._reg(logits_k, target)
-                else:
-                    ce = self._ce(logits_k, target)
-
+                ce = self._ce(logits_k, target)
                 ce_list.append(ce)
 
                 # Mask regularization (per-graph keep-rate prior)
                 reg = self._mask_reg(
-                    node_masks[:, k, :], edge_masks[:, k, :], feat_masks[:, k, :],
+                    node_masks[:, k, :], edge_masks[:, k, :],
                     node_batch=batch, edge_batch=batch[edge_index[0]], expert_idx=k
                 )
                 reg_list.append(reg)
 
                 if not is_eval:
-                    # Semantic invariance: VIB on h_C + LA on residual
 
                     if self._lambda_L > 0:
-                        # h_spur = self._encode_complement_subgraph(
-                        #     data=data,
-                        #     node_mask=node_mask,           # (N,1) or (N,)
-                        #     edge_mask=edge_mask.view(-1),  # (E,)
-                        #     feat_mask=feat_mask,           # (N,F) or (F,)
-                        #     encoder=self.la_encoders[0],
-                        #     symmetrize=False,              # set True if you want undirected EW averaging
-                        # )
-
-                        # ea = self._causal_loss(
-                        #     h_masked=hC_k,
-                        #     h_ea=h_ea_list[:, k, :],
-                        #     expert_idx=k,
-                        #     env_labels=env_labels,
-                        # )
-
-                        # la = self._spur_loss(
-                        #     h_masked=hC_k,
-                        #     labels=target,
-                        #     h_spur=h_spur
-                        # )
-                        la = hC_k.new_tensor(0.0)
                         h_spur = self._encode_complement_subgraph(
                                 data=data,
                                 node_mask=node_mask,           # (N,1) or (N,)
                                 edge_mask=edge_mask.view(-1),  # (E,)
-                                feat_mask=feat_mask,           # (N,F) or (F,)
-                                encoder=self.ea_encoders[0],
+                                encoder=self.label_classifier_encoder,
                                 symmetrize=False,              # set True if you want undirected EW averaging
                             )
-                        logits_spurs_env = self.ea_classifiers[k](h_spur)
-                        ea = self._ce(logits_spurs_env, env_labels)
-
+                        la = self._spur_loss(
+                            h_masked=hC_k,
+                            labels=target,
+                            h_spur=h_spur,
+                            expert_idx=k
+                        )
                     else:
                         la = hC_k.new_tensor(0.0)
+
+                    if self._lambda_E > 0:
+
+                        h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index_k, batch=batch_k, edge_weight=edge_weight_k)
+
+                        ea = self._causal_loss(
+                            h_masked=hC_k,
+                            h_ea=h_stable_env_k,
+                            expert_idx=k,
+                            env_labels=env_labels,
+                        )
+
+                    else:
                         ea = hC_k.new_tensor(0.0)
 
                     if self._weight_str_live > 0:
@@ -391,7 +353,6 @@ class Experts(nn.Module):
                             data=data,
                             node_mask=node_mask,                 # masks computed for expert k above
                             edge_mask=edge_mask.view(-1),
-                            feat_mask=feat_mask,
                             encoder=self.lc_encoders[0],         # <-- stays the same
                             symmetrize=False,
                         )
@@ -472,7 +433,6 @@ class Experts(nn.Module):
 
                     else:
                         str_loss = hC_k.new_tensor(0.0)
-                        la = hC_k.new_tensor(0.0)
 
                 else:
                     la = hC_k.new_tensor(0.0)
@@ -492,7 +452,7 @@ class Experts(nn.Module):
                 tot_list.append(total)
 
             # Diversity across experts' masks
-            div_loss = self.weight_div * self._diversity_loss(node_masks, edge_masks, feat_masks,
+            div_loss = self.weight_div * self._diversity_loss(node_masks, edge_masks,
                                             node_batch=batch, edge_batch=batch[edge_index[0]])
 
             out.update({
@@ -542,7 +502,6 @@ class Experts(nn.Module):
         self,
         node_masks: torch.Tensor,   # [N_nodes, K, 1] or [N_nodes, K]
         edge_masks: torch.Tensor,   # [N_edges, K, 1] or [N_edges, K]
-        feat_masks: torch.Tensor,   # [N_nodes, K, F] (per-feature) or [N_nodes, K, 1]
         node_batch: torch.Tensor,   # [N_nodes] graph indices (0..B-1)
         edge_batch: torch.Tensor,   # [N_edges] graph indices (0..B-1)
     ):
@@ -633,22 +592,15 @@ class Experts(nn.Module):
         # -------- prepare modality tensors to shape [items, K] --------
         N = _maybe_squeeze(node_masks)                   # [N_nodes, K]
         E = _maybe_squeeze(edge_masks)                   # [N_edges, K]
-        # feat: if per-feature masks exist, average across features to a single prob per node
-        if feat_masks.dim() == 3 and feat_masks.size(-1) > 1:
-            Fm = feat_masks.mean(dim=-1)                 # [N_nodes, K]
-        else:
-            Fm = _maybe_squeeze(feat_masks)              # [N_nodes, K]
 
         # -------- compute components per modality --------
         n_corr = _per_graph_abs_corr_hinge(N, node_batch)
         e_corr = _per_graph_abs_corr_hinge(E, edge_batch)
-        f_corr = _per_graph_abs_corr_hinge(Fm, node_batch)
-        corr   = torch.stack([n_corr, e_corr, f_corr]).mean()
+        corr   = torch.stack([n_corr, e_corr]).mean()
 
         n_uo = _union_overlap_terms(N, node_batch)
         e_uo = _union_overlap_terms(E, edge_batch)
-        f_uo = _union_overlap_terms(Fm, node_batch)
-        uo   = torch.stack([n_uo, e_uo, f_uo]).mean()
+        uo   = torch.stack([n_uo, e_uo]).mean()
 
         # final combined diversity loss
         # print(f"corr: {corr}, uo: {uo}")
@@ -657,7 +609,7 @@ class Experts(nn.Module):
         loss = w_corr * corr + w_uo * uo
         return loss
 
-    def _mask_reg(self, node_mask, edge_mask, feat_mask, node_batch, edge_batch, expert_idx: int,
+    def _mask_reg(self, node_mask, edge_mask, node_batch, edge_batch, expert_idx: int,
                   use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5)):
         if use_fixed_rho:
             rho_node, rho_edge, rho_feat = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
@@ -676,11 +628,8 @@ class Experts(nn.Module):
 
         node_keep_pg = per_graph_keep(node_mask, node_batch)
         edge_keep_pg = per_graph_keep(edge_mask, edge_batch)
-        feat_keep_pg = per_graph_keep(feat_mask.mean(dim=1, keepdim=True), node_batch)
 
-        return ((node_keep_pg - rho_node) ** 2).mean() + \
-               ((edge_keep_pg - rho_edge) ** 2).mean() + \
-               ((feat_keep_pg - rho_feat) ** 2).mean()
+        return ((node_keep_pg - rho_node) ** 2).mean() + ((edge_keep_pg - rho_edge) ** 2).mean()
 
     def _causal_loss(
         self,
@@ -719,7 +668,7 @@ class Experts(nn.Module):
                                 f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
             # 3) adversarial logits (GRL applies the reversed grad only to features)
             h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
-            logits_E = self.ea_classifiers[0](h_ea_adv)   # (B, num_envs)
+            logits_E = self.expert_env_classifiers[expert_idx](h_ea_adv)   # (B, num_envs)
             if logits_E.size(1) != self.num_envs:
                 raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
             # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
@@ -732,6 +681,7 @@ class Experts(nn.Module):
         h_masked: torch.Tensor,         # h_C (B, H)
         labels: torch.Tensor,           # (B,)
         h_spur: Optional[torch.Tensor] = None,    # (B, H_spur)
+        expert_idx: Optional[int] = None,
     ) -> torch.Tensor:
         device = h_masked.device
         B, H = h_masked.shape
@@ -754,20 +704,9 @@ class Experts(nn.Module):
         if h_spur is None:
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
         la = h_masked.new_tensor(0.0)
-        if self._lambda_L > 0.:
-            if getattr(self, "metric", None) == "MAE":
-                # ----- Regression head (lazy init) -----
-                Hs = h_spur.size(1)
-                if not hasattr(self, "reg_head_spur_sem"):
-                    self.reg_head_spur_sem = nn.Linear(Hs, 1).to(h_spur.device)
-
-                pred = self.reg_head_spur_sem(h_spur_adv).squeeze(-1)  # (B,)
-                tgt  = labels.view(-1).to(pred.dtype)                  # (B,)
-                la   = F.l1_loss(pred, tgt, reduction='mean')          # MAE
-            else:
-                # ----- Classification head (existing path) -----
-                logits_y_spur = self.lbl_head_spur_sem(h_spur_adv)     # (B, num_classes)
-                la = F.cross_entropy(logits_y_spur, labels)
+        # ----- Classification head (existing path) -----
+        logits_y_spur = self.expert_label_classifiers[expert_idx](h_spur_adv)     # (B, num_classes)
+        la = F.cross_entropy(logits_y_spur, labels)
         return la
     
     def _kmeans_labels(self, X: torch.Tensor, K: int, iters: int = 10) -> torch.Tensor:
@@ -887,7 +826,6 @@ class Experts(nn.Module):
         data,
         node_mask: torch.Tensor,   # (N,) or (N,1)
         edge_mask: torch.Tensor,   # (E,) or (E,1)
-        feat_mask: torch.Tensor,   # (F,) or (N,F)
         encoder: torch.nn.Module,  # e.g., self.classifier_encoder or a tiny spur encoder
         symmetrize: bool = False,  # set True if your graph is undirected and you want EW symmetry
     ):
@@ -910,18 +848,9 @@ class Experts(nn.Module):
         if edge_m.dim() == 1: edge_m = edge_m.view(-1, 1)
         edge_m = edge_m.clamp(0.0, 1.0).view(-1)            # (E,)
 
-        feat_m = feat_mask.clamp(0.0, 1.0)
-        if feat_m.dim() == 1:
-            feat_m = feat_m.view(1, -1).expand(N, -1)       # (N,F)
-        elif feat_m.size(0) == 1:
-            feat_m = feat_m.expand(N, -1)                   # (N,F)
-        elif feat_m.size(0) != N or feat_m.size(1) != F:
-            raise ValueError(f"feat_mask must be (F,), (1,F), or (N,F); got {tuple(feat_mask.shape)}")
-
         # --- complement masks ---
         node_m_S = 1.0 - node_m                              # (N,1)
         edge_m_S = 1.0 - edge_m                              # (E,)
-        feat_m_S = 1.0 - feat_m                              # (N,F)
 
         # --- apply to features (node-wise * feature-wise) ---
         x_spur = (x * node_m_S) # * feat_m_S                   # (N,F)
