@@ -5,7 +5,7 @@ from typing import Optional
 
 from torch_geometric.nn import global_mean_pool, global_add_pool
 from torch_geometric.nn import BatchNorm as PYG_BatchNorm  # for isinstance checks
-from models.gnn_models import GINEncoderWithEdgeWeight
+from models.gnn_models import GINEncoderWithEdgeWeight, ExpertClassifier
 from torch_geometric.utils import to_undirected
 from torch_geometric.data import Data
 from contextlib import contextmanager
@@ -56,6 +56,7 @@ class Experts(nn.Module):
         # --- BN freeze controls (optional; set via config['model']) ---
         mcfg_bn = config.get('model', {})
         self.global_pooling = mcfg_bn.get('global_pooling', 'mean')
+
         # Freeze BN running stats (and optionally affine params) at/after this epoch. Use -1 to disable.
         self.bn_freeze_epoch  = int(mcfg_bn.get('bn_freeze_epoch', -1))
         self.bn_freeze_affine = bool(mcfg_bn.get('bn_freeze_affine', False))
@@ -103,44 +104,63 @@ class Experts(nn.Module):
         # ---------- Encoders / Heads ----------
         # Causal/selector encoder to get node embeddings Z for masks
         self.causal_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
+            self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
         )
 
         # Classifier encoder (masked pass)
         self.classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
+            self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
         )
 
         # Per-expert classifiers
-        self.expert_classifiers = nn.ModuleList([
-            nn.Linear(hidden_dim, self.num_classes) for _ in range(self.num_experts)
+        self.expert_classifiers_causal = nn.ModuleList([
+            ExpertClassifier(hidden_dim, self.num_classes, dropout, self.global_pooling)
+            for _ in range(self.num_experts)
+        ])
+
+        self.expert_classifiers_spur = nn.ModuleList([
+            ExpertClassifier(hidden_dim, self.num_classes, dropout, self.global_pooling)
+            for _ in range(self.num_experts)
         ])
 
         self.num_envs = dataset_info['num_envs']
         self.env_classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
+            self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
         )
-        self.expert_env_classifiers = nn.ModuleList([
-            nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_envs)) for _ in range(self.num_experts)
+        self.expert_env_classifiers_causal = nn.ModuleList([
+            ExpertClassifier(hidden_dim, self.num_envs, dropout, self.global_pooling)
+            for _ in range(self.num_experts)
+        ])
+        self.expert_env_classifiers_spur = nn.ModuleList([
+            ExpertClassifier(hidden_dim, self.num_envs, dropout, self.global_pooling)
+            for _ in range(self.num_experts)
         ])
 
         # --- LECI-style tiny GINs for the LA (spur/complement) branch ---
-        self.label_classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
-        )
+        # self.label_classifier_encoder = GINEncoderWithEdgeWeight(
+        #     self.num_features, hidden_dim, num_layers, dropout, train_eps=True
+        # )
 
         # Label-adversarial head on semantic residual h_S
-        self.expert_label_classifiers = nn.ModuleList([
-            nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_classes)) for _ in range(self.num_experts)
-        ])
+        # self.expert_label_classifiers = nn.ModuleList([
+        #     nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_classes)) for _ in range(self.num_experts)
+        # ])
 
         # Per-expert maskers
         self.expert_node_masks = nn.ModuleList([
-            nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim//2, 1)
+            )
             for _ in range(self.num_experts)
         ])
         self.expert_edge_masks = nn.ModuleList([
-            nn.Sequential(nn.Linear(2 * hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
+            nn.Sequential(
+                nn.Linear(hidden_dim*2, hidden_dim//2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim//2, 1)
+            )
             for _ in range(self.num_experts)
         ])
 
@@ -179,7 +199,7 @@ class Experts(nn.Module):
 
         # Structural invariance (live) weight ramp (after warmup)
         if epoch < self.strinv_warmup_epochs:
-            self._weight_str = 0.0
+            self._weight_str_live = 0.0
         else:
             p = min((epoch - self.strinv_warmup_epochs) / max(self.strinv_ramp_epochs, 1), 1.0)
             self._weight_str_live = float(self.weight_str_end * p)
@@ -210,6 +230,8 @@ class Experts(nn.Module):
         is_eval = not self.training
 
         for k in range(self.num_experts):
+            # print(f"Z.shape: {Z.shape}")
+            # print(f"edge_feat.shape: {edge_feat.shape}")
             node_mask_logits = self.expert_node_masks[k](Z)
             edge_mask_logits = self.expert_edge_masks[k](edge_feat)
 
@@ -246,14 +268,10 @@ class Experts(nn.Module):
             edge_weight = edge_mask.view(-1)
 
 
-            masked_Z = self.classifier_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
-            if self.global_pooling == 'mean':
-                h_stable = global_mean_pool(masked_Z, batch)  # h_C
-            elif self.global_pooling == 'sum':
-                h_stable = global_add_pool(masked_Z, batch)  # h_C
+            h_stable = self.classifier_encoder(masked_x, edge_index, edge_weight=edge_weight, batch=batch)
 
             # Classify with your existing per-expert classifier
-            logit = self.expert_classifiers[k](h_stable)
+            logit = self.expert_classifiers_causal[k](h_stable, edge_index, edge_weight=edge_weight, batch=batch)
 
             h_stable_list.append(h_stable)
             expert_logits.append(logit)
@@ -300,12 +318,13 @@ class Experts(nn.Module):
                 if not is_eval:
                     h_spur_env = self._encode_complement_subgraph(
                                 data=data,
-                                node_mask=node_mask,           # (N,1) or (N,)
-                                edge_mask=edge_mask.view(-1),  # (E,)
+                                node_mask=node_mask_k,           # (N,1) or (N,)
+                                edge_mask=edge_mask_k.view(-1),  # (E,)
                                 encoder=self.env_classifier_encoder,
                                 symmetrize=False,              # set True if you want undirected EW averaging
                             )
-                    spur_env_logits = self.expert_env_classifiers[k](h_spur_env)
+                    edge_weight_k = edge_mask_k.view(-1)
+                    spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env, edge_index, edge_weight=edge_weight_k, batch=batch)
                     ce_env = self._ce(spur_env_logits, env_labels)
                     ce_list[-1] += 0.01 * ce_env
 
@@ -313,18 +332,19 @@ class Experts(nn.Module):
                         with self._frozen_params(self.classifier_encoder, freeze_bn_running_stats=True):
                             h_spur = self._encode_complement_subgraph(
                                     data=data,
-                                    node_mask=node_mask,           # (N,1) or (N,)
-                                    edge_mask=edge_mask.view(-1),  # (E,)
+                                    node_mask=node_mask_k,           # (N,1) or (N,)
+                                    edge_mask=edge_mask_k.view(-1),  # (E,)
                                     encoder=self.classifier_encoder,
                                     symmetrize=False,              # set True if you want undirected EW averaging
                                 )
                                 
-                        with self._frozen_params(self.expert_classifiers[k], freeze_bn_running_stats=True):
-                            la = self._spur_loss(
+                        la = self._spur_loss(
                                 h_masked=hC_k,
                                 labels=target,
                                 h_spur=h_spur,
-                                expert_idx=k
+                                expert_idx=k,
+                                edge_index=edge_index,
+                                batch=batch
                             )
                     else:
                         la = hC_k.new_tensor(0.0)
@@ -334,18 +354,15 @@ class Experts(nn.Module):
                         edge_weight_k = edge_mask_k.view(-1)
                         with self._frozen_params(self.env_classifier_encoder, freeze_bn_running_stats=True):
                             h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, batch=batch, edge_weight=edge_weight_k)
-                        if self.global_pooling == 'mean':
-                            h_stable_env_k = global_mean_pool(h_stable_env_k, batch)
-                        elif self.global_pooling == 'sum':
-                            h_stable_env_k = global_add_pool(h_stable_env_k, batch)
 
-                        with self._frozen_params(self.expert_env_classifiers[k], freeze_bn_running_stats=True):
-                            ea = self._causal_loss(
-                                h_masked=hC_k,
-                                h_ea=h_stable_env_k,
-                                expert_idx=k,
-                                env_labels=env_labels,
-                            )
+                        ea = self._causal_loss(
+                            h_masked=hC_k,
+                            h_ea=h_stable_env_k,
+                            expert_idx=k,
+                            env_labels=env_labels,
+                            edge_index=edge_index,
+                            batch=batch
+                        )
 
                     else:
                         ea = hC_k.new_tensor(0.0)
@@ -642,6 +659,8 @@ class Experts(nn.Module):
         h_ea:   Optional[torch.Tensor] = None,    # (B, Hea)
         expert_idx: Optional[int] = None,
         env_labels: Optional[torch.Tensor] = None,
+        edge_index: Optional[torch.Tensor] = None,
+        batch: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         device = h_masked.device
         B, H = h_masked.shape
@@ -664,15 +683,15 @@ class Experts(nn.Module):
         # 1) sanitize env labels
         env_tgt = env_labels.view(-1).long().to(h_ea.device)   # (B,)
         # 2) sanity checks
-        if env_tgt.numel() != h_ea.size(0):
-            raise ValueError(f"env_labels shape {tuple(env_tgt.shape)} "
-                            f"must match batch size {h_ea.size(0)}")
+        # if env_tgt.numel() != h_ea.size(0):
+        #     raise ValueError(f"env_labels shape {tuple(env_tgt.shape)} "
+        #                     f"must match batch size {h_ea.size(0)}")
         if int(env_tgt.max()) >= self.num_envs or int(env_tgt.min()) < 0:
             raise ValueError(f"env_labels must be in [0, {self.num_envs-1}] "
                             f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
         # 3) adversarial logits (GRL applies the reversed grad only to features)
         h_ea_adv = grad_reverse(h_ea, 1)          # scale via λ_E here
-        logits_E = self.expert_env_classifiers[expert_idx](h_ea_adv)   # (B, num_envs)
+        logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv, edge_index, batch=batch)   # (B, num_envs)
         if logits_E.size(1) != self.num_envs:
             raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
         # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
@@ -686,6 +705,8 @@ class Experts(nn.Module):
         labels: torch.Tensor,           # (B,)
         h_spur: Optional[torch.Tensor] = None,    # (B, H_spur)
         expert_idx: Optional[int] = None,
+        edge_index: Optional[torch.Tensor] = None,
+        batch: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         device = h_masked.device
         B, H = h_masked.shape
@@ -709,7 +730,7 @@ class Experts(nn.Module):
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
         la = h_masked.new_tensor(0.0)
         # ----- Classification head (existing path) -----
-        logits_y_spur = self.expert_classifiers[expert_idx](h_spur_adv)     # (B, num_classes)
+        logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv, edge_index, batch=batch)     # (B, num_classes)
         la = F.cross_entropy(logits_y_spur, labels)
         return la
     
@@ -866,11 +887,7 @@ class Experts(nn.Module):
 
         # --- encode + pool ---
         Z_spur = encoder(x_spur, ei, batch=batch, edge_weight=ew_spur)
-        if self.global_pooling == 'mean':
-            h_spur = global_mean_pool(Z_spur, batch)             # (B,H_enc)
-        elif self.global_pooling == 'sum':
-            h_spur = global_add_pool(Z_spur, batch)             # (B,H_enc)
-        return h_spur
+        return Z_spur
     
     def enforce_edge_mask_symmetry(self, edge_index: torch.Tensor,
                                 edge_mask: torch.Tensor,
@@ -1107,3 +1124,19 @@ def mask_symmetry_report(edge_index: torch.Tensor,
         "note": "Self-loops (i==j) ignored; symmetry is evaluated only where both directions exist."
     }
 
+
+def _check_graph(x, edge_index, edge_weight=None, batch=None, where=""):
+    assert x.dtype in (torch.float32, torch.float64), f"{where}: x dtype {x.dtype}"
+    assert edge_index.dtype == torch.long, f"{where}: edge_index dtype {edge_index.dtype}"
+    N = x.size(0)
+    E = edge_index.size(1)
+    assert edge_index.dim() == 2 and edge_index.size(0) == 2, f"{where}: edge_index shape {edge_index.shape}"
+    max_id = int(edge_index.max().item()) if E > 0 else -1
+    min_id = int(edge_index.min().item()) if E > 0 else 0
+    assert 0 <= min_id, f"{where}: negative node id in edge_index"
+    assert max_id < N, f"{where}: node id {max_id} >= N={N}"
+    if edge_weight is not None:
+        assert edge_weight.dim() == 1 or (edge_weight.dim()==2 and edge_weight.size(-1)==1), f"{where}: edge_weight shape {edge_weight.shape}"
+        assert edge_weight.size(0) == E, f"{where}: |edge_weight|={edge_weight.size(0)} != E={E}"
+    if batch is not None:
+        assert batch.size(0) == N, f"{where}: |batch|={batch.size(0)} != N={N}"

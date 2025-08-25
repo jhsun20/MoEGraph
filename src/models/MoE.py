@@ -45,7 +45,7 @@ class MoE(nn.Module):
         gate_hidden    = config['gate']['hidden_dim']
         gate_depth     = config['gate']['depth']
         dropout        = config['model']['dropout']
-        self.gate_enc  = GINEncoderWithEdgeWeight(self.num_features, gate_hidden, gate_depth, dropout, train_eps=True)
+        self.gate_enc  = GINEncoderWithEdgeWeight(self.num_features, gate_hidden, gate_depth, dropout, train_eps=True, global_pooling='none')
         self.gate_mlp  = nn.Sequential(nn.Linear(gate_hidden, gate_hidden),
                                        nn.ReLU(),
                                        nn.Linear(gate_hidden, self.num_experts))

@@ -188,11 +188,12 @@ class GINConvWithEdgeWeight(MessagePassing):
         return f'{self.__class__.__name__}(nn={self.nn})'
     
 class GINEncoderWithEdgeWeight(nn.Module):
-    def __init__(self, in_dim, hidden_dim, num_layers, dropout=0.5, train_eps=False):
+    def __init__(self, in_dim, hidden_dim, num_layers, dropout=0.5, train_eps=False, global_pooling='mean'):
         super().__init__()
         self.convs = nn.ModuleList()
         self.bns   = nn.ModuleList()   # keep attribute name to avoid touching caller code
         self.acts  = nn.ModuleList()
+        self.global_pooling = global_pooling
 
         for i in range(num_layers):
             input_dim = in_dim if i == 0 else hidden_dim
@@ -219,4 +220,32 @@ class GINEncoderWithEdgeWeight(nn.Module):
             x = bn(x)
             x = act(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
+        if self.global_pooling == 'mean':
+            x = global_mean_pool(x, batch)
+        elif self.global_pooling == 'sum':
+            x = global_add_pool(x, batch)
+        elif self.global_pooling == 'none':
+            pass
+        else:
+            raise ValueError(f"Unsupported pooling type: {self.global_pooling}")
         return x  # (N, hidden_dim)
+    
+    
+class ExpertClassifier(nn.Module):
+    def __init__(self, hidden_dim, num_classes, dropout, global_pooling):
+        super().__init__()
+        self.encoder = GINEncoderWithEdgeWeight(
+            hidden_dim, hidden_dim, 1, dropout,
+            train_eps=True, global_pooling=global_pooling
+        )
+
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, num_classes)
+        )
+
+    def forward(self, x, edge_index, edge_weight=None, batch=None):
+        h = self.encoder(x, edge_index, edge_weight, batch)  # → [B, hidden_dim]
+        out = self.mlp(h)  # → [B, num_classes]
+        return out
