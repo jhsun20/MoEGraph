@@ -162,8 +162,7 @@ class MoE(nn.Module):
             'rho': shared_out['rho'],
             'expert_logits': expert_logits,         # (B, K, C)
             'node_masks': shared_out['node_masks'],
-            'edge_masks': shared_out['edge_masks'],
-            'feat_masks': shared_out['feat_masks'],
+            'edge_masks': shared_out['edge_masks']
         }
 
     @staticmethod

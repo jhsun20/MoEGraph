@@ -206,8 +206,6 @@ class Experts(nn.Module):
 
         node_masks, edge_masks = [], []
         expert_logits, h_stable_list = [], []
-        masked_x_list, edge_weights_list, edge_indexes_list, batches_list = [], [], [], []
-
 
         is_eval = not self.training
 
@@ -259,19 +257,11 @@ class Experts(nn.Module):
 
             h_stable_list.append(h_stable)
             expert_logits.append(logit)
-            masked_x_list.append(masked_x)
-            edge_weights_list.append(edge_weight)
-            edge_indexes_list.append(edge_index)
-            batches_list.append(batch)
 
         node_masks    = torch.stack(node_masks, dim=1)        # (N, K, 1)
         edge_masks    = torch.stack(edge_masks, dim=1)        # (E, K, 1)
         expert_logits = torch.stack(expert_logits, dim=1)     # (B, K, C)
         h_stable_list = torch.stack(h_stable_list, dim=1)     # (B, K, H)
-        masked_x_list = torch.stack(masked_x_list, dim=1)     # (B, K, N, D)
-        edge_weights_list = torch.stack(edge_weights_list, dim=1)     # (B, K, E)
-        edge_indexes_list = torch.stack(edge_indexes_list, dim=1)     # (B, K, E, 2)
-        batches_list = torch.stack(batches_list, dim=1)     # (B, K)
 
         if self.global_pooling == 'mean':
             h_orig = global_mean_pool(Z, batch)            # (B, H)
@@ -295,11 +285,6 @@ class Experts(nn.Module):
                 hC_k     = h_stable_list[:, k, :]
                 node_mask_k = node_masks[:, k, :]
                 edge_mask_k = edge_masks[:, k, :]
-                masked_x_k = masked_x_list[:, k, :, :]
-                edge_weight_k = edge_weights_list[:, k, :]
-                edge_index_k = edge_indexes_list[:, k, :, :]
-                batch_k = batches_list[:, k, :]
-
                 # Classification CE (class-weighted)
                 # print(f"self.num_classes: {self.num_classes}, self.metric: {self.metric}")
                 ce = self._ce(logits_k, target)
@@ -332,8 +317,9 @@ class Experts(nn.Module):
                         la = hC_k.new_tensor(0.0)
 
                     if self._lambda_E > 0:
-
-                        h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index_k, batch=batch_k, edge_weight=edge_weight_k)
+                        masked_x_k = x * node_mask_k
+                        edge_weight_k = edge_mask_k.view(-1)
+                        h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, batch=batch, edge_weight=edge_weight_k)
 
                         ea = self._causal_loss(
                             h_masked=hC_k,
@@ -610,13 +596,12 @@ class Experts(nn.Module):
         return loss
 
     def _mask_reg(self, node_mask, edge_mask, node_batch, edge_batch, expert_idx: int,
-                  use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5)):
+                  use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5)):
         if use_fixed_rho:
-            rho_node, rho_edge, rho_feat = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
+            rho_node, rho_edge = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
         else:
             rho_node = torch.clamp(self.rho_node[expert_idx], 0.4, 0.6)
             rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.4, 0.6)
-            rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.4, 0.6)
 
         def per_graph_keep(mask_vals, batch_idx):
             G = batch_idx.max().item() + 1
