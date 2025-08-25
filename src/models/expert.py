@@ -671,7 +671,7 @@ class Experts(nn.Module):
             raise ValueError(f"env_labels must be in [0, {self.num_envs-1}] "
                             f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
         # 3) adversarial logits (GRL applies the reversed grad only to features)
-        h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
+        h_ea_adv = grad_reverse(h_ea, 1)          # scale via λ_E here
         logits_E = self.expert_env_classifiers[expert_idx](h_ea_adv)   # (B, num_envs)
         if logits_E.size(1) != self.num_envs:
             raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
@@ -704,7 +704,7 @@ class Experts(nn.Module):
         # vib = self._beta_ib * kl_ps.mean()
 
         # --- LA on complement embedding ---
-        h_spur_adv = grad_reverse(h_spur, self._lambda_L)
+        h_spur_adv = grad_reverse(h_spur, 1)
         if h_spur is None:
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
         la = h_masked.new_tensor(0.0)
