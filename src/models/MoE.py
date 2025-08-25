@@ -171,23 +171,38 @@ class MoE(nn.Module):
             ce_per_sample = F.cross_entropy(stacked_logits[k], targets, reduction='none')  # (B,)
             loss += (gate_weights[k] * ce_per_sample).mean()
         return loss
-
+    
     @staticmethod
-    def _load_balance(gate_probs, lam=0.2, T=0.2, eps=1e-8):
-        # gate_probs: (B,K)
+    def _load_balance(gate_probs, lam=0.2, T=0.2, eps=1e-12):
+        """
+        gate_probs: (B, K) from entmax/softmax; rows sum to 1, entries >= 0
+        lam: weight on per-sample entropy penalty (higher lam -> sparser routing)
+        T:   sharpening temperature for "winner" histogram (smaller -> sharper)
+        """
         B, K = gate_probs.shape
         uniform = gate_probs.new_full((K,), 1.0 / K)
 
-        # 1) Balanced usage across batch (nonnegative, 0 at uniform marginal)
-        p_bar = gate_probs.mean(0)
-        L_bal = F.kl_div((p_bar + eps).log(), uniform, reduction='batchmean')
+        # 1) Balanced usage across the batch: KL(uniform || p_bar)
+        p_bar = gate_probs.mean(dim=0).clamp_min(eps)     # (K,)
+        log_pbar = p_bar.log()
+        log_u = uniform.log()                             # constant
+        L_bal = torch.sum(uniform * (log_u - log_pbar))   # scalar
 
-        # 2) Per-sample sharpness (penalize uniform rows)
-        H_rows = -(gate_probs * (gate_probs + eps).log()).sum(dim=1).mean()
+        # 2) Per-sample sharpness: penalize high entropy (encourage sparsity)
+        #    H(p_i) = -sum_j p_ij log p_ij
+        H_rows = -(gate_probs.clamp_min(eps) * gate_probs.clamp_min(eps).log()).sum(dim=1).mean()
 
-        # 3) Spread winners across experts (soft top-1 histogram)
-        q = F.softmax((gate_probs + eps).log() / T, dim=-1)  # sharpened rows
-        counts = q.mean(dim=0)
-        L_top1 = F.kl_div((counts + eps).log(), uniform, reduction='batchmean')
+        # 3) Spread "winners" across experts (soft top-1 histogram)
+        #    Sharpen with power-normalization: q_ij ∝ p_ij^(1/T)
+        if T <= 0:
+            # avoid division by zero; default to argmax one-hots
+            q = torch.zeros_like(gate_probs)
+            q.scatter_(1, gate_probs.argmax(dim=1, keepdim=True), 1.0)
+        else:
+            q_pow = gate_probs.clamp_min(eps).pow(1.0 / T)
+            q = q_pow / q_pow.sum(dim=1, keepdim=True)    # (B,K)
+        counts = q.mean(dim=0).clamp_min(eps)             # (K,)
+        L_top1 = torch.sum(uniform * (log_u - counts.log()))
 
+        # Final: reverse-KL balance + entropy penalty + (small) winner-spread
         return L_bal + lam * H_rows + 0.2 * L_top1

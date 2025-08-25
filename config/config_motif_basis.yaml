@@ -71,7 +71,6 @@ logging:
 gate:
   activation: "entmax"
   entmax_alpha: 1.2
-  model: "GIN"
-  depth: 2
-  hidden_dim: 64
+  depth: 3
+  hidden_dim: 300
   train_after: 20
