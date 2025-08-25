@@ -320,6 +320,10 @@ class Experts(nn.Module):
                         masked_x_k = x * node_mask_k
                         edge_weight_k = edge_mask_k.view(-1)
                         h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, batch=batch, edge_weight=edge_weight_k)
+                        if self.global_pooling == 'mean':
+                            h_stable_env_k = global_mean_pool(h_stable_env_k, batch)
+                        elif self.global_pooling == 'sum':
+                            h_stable_env_k = global_add_pool(h_stable_env_k, batch)
 
                         ea = self._causal_loss(
                             h_masked=hC_k,
@@ -641,23 +645,22 @@ class Experts(nn.Module):
 
         # --- EA on h_ea (environment adversary on G_C) ---
         ea = h_masked.new_tensor(0.0)
-        if self._lambda_E > 0.0 and h_ea is not None and env_labels is not None:
-            # 1) sanitize env labels
-            env_tgt = env_labels.view(-1).long().to(h_ea.device)   # (B,)
-            # 2) sanity checks
-            if env_tgt.numel() != h_ea.size(0):
-                raise ValueError(f"env_labels shape {tuple(env_tgt.shape)} "
-                                f"must match batch size {h_ea.size(0)}")
-            if int(env_tgt.max()) >= self.num_envs or int(env_tgt.min()) < 0:
-                raise ValueError(f"env_labels must be in [0, {self.num_envs-1}] "
-                                f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
-            # 3) adversarial logits (GRL applies the reversed grad only to features)
-            h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
-            logits_E = self.expert_env_classifiers[expert_idx](h_ea_adv)   # (B, num_envs)
-            if logits_E.size(1) != self.num_envs:
-                raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
-            # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
-            ea = F.cross_entropy(logits_E, env_tgt)
+        # 1) sanitize env labels
+        env_tgt = env_labels.view(-1).long().to(h_ea.device)   # (B,)
+        # 2) sanity checks
+        if env_tgt.numel() != h_ea.size(0):
+            raise ValueError(f"env_labels shape {tuple(env_tgt.shape)} "
+                            f"must match batch size {h_ea.size(0)}")
+        if int(env_tgt.max()) >= self.num_envs or int(env_tgt.min()) < 0:
+            raise ValueError(f"env_labels must be in [0, {self.num_envs-1}] "
+                            f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
+        # 3) adversarial logits (GRL applies the reversed grad only to features)
+        h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
+        logits_E = self.expert_env_classifiers[expert_idx](h_ea_adv)   # (B, num_envs)
+        if logits_E.size(1) != self.num_envs:
+            raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
+        # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
+        ea = F.cross_entropy(logits_E, env_tgt)
 
         return ea
     
