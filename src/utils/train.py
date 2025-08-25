@@ -108,6 +108,12 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         model.set_epoch(epoch)
 
     gate_weight_accumulator = []
+    
+    # ------ epoch-level accumulators for mask keep/drop ------
+    acc_node_keep_sum = None; acc_node_cnt = 0
+    acc_edge_keep_sum = None; acc_edge_cnt = 0
+    acc_node_keep_pg_sum = None; acc_node_pg_count = 0
+    acc_edge_keep_pg_sum = None; acc_edge_pg_count = 0
 
     pbar = tqdm(loader, desc='Training MoEUIL', leave=False)
     for data in pbar:
@@ -145,6 +151,44 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
 
+        # ------- accumulate mask stats from THIS batch -------
+        nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
+        em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
+        if (nm is not None) and (em is not None):
+            node_batch = data.batch
+            edge_batch = data.batch[data.edge_index[0]]   # map edges to graphs via source node
+            # micro (size-weighted across items)
+            Xn = nm.detach().float().squeeze(-1)   # (N, K)
+            Xe = em.detach().float().squeeze(-1)   # (E, K)
+            kn = Xn.sum(dim=0).cpu()               # (K,)
+            ke = Xe.sum(dim=0).cpu()               # (K,)
+            acc_node_keep_sum = kn if acc_node_keep_sum is None else acc_node_keep_sum + kn
+            acc_edge_keep_sum = ke if acc_edge_keep_sum is None else acc_edge_keep_sum + ke
+            acc_node_cnt += Xn.size(0)
+            acc_edge_cnt += Xe.size(0)
+
+            # macro (per-graph mean of per-graph keep rates)
+            G_n = int(node_batch.max().item()) + 1
+            G_e = int(edge_batch.max().item()) + 1
+
+            keep_sum_pg_n = torch.zeros(G_n, Xn.size(1), device=Xn.device)
+            cnt_sum_pg_n  = torch.zeros(G_n, Xn.size(1), device=Xn.device)
+            keep_sum_pg_n.index_add_(0, node_batch, Xn)
+            cnt_sum_pg_n.index_add_(0, node_batch, torch.ones_like(Xn))
+            keep_pg_n = (keep_sum_pg_n / (cnt_sum_pg_n + 1e-8)).mean(dim=0).cpu()  # (K,)
+
+            keep_sum_pg_e = torch.zeros(G_e, Xe.size(1), device=Xe.device)
+            cnt_sum_pg_e  = torch.zeros(G_e, Xe.size(1), device=Xe.device)
+            keep_sum_pg_e.index_add_(0, edge_batch, Xe)
+            cnt_sum_pg_e.index_add_(0, edge_batch, torch.ones_like(Xe))
+            keep_pg_e = (keep_sum_pg_e / (cnt_sum_pg_e + 1e-8)).mean(dim=0).cpu()  # (K,)
+
+            acc_node_keep_pg_sum = keep_pg_n if acc_node_keep_pg_sum is None else acc_node_keep_pg_sum + keep_pg_n
+            acc_edge_keep_pg_sum = keep_pg_e if acc_edge_keep_pg_sum is None else acc_edge_keep_pg_sum + keep_pg_e
+            acc_node_pg_count += 1
+            acc_edge_pg_count += 1
+        # ----------------------------------------------------------
+
     # shapes now consistent: concat along batch dimension
     gate_weights_all = torch.cat(gate_weight_accumulator, dim=0)  # (N, K)
     load_balance = gate_weights_all.mean(dim=0)
@@ -179,42 +223,34 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
 
-    # --- FIX: use last batch’s Data to get batch indices for stats (no cached_masks) ---
-    nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
-    em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
+    # ------- NEW: compute & print epoch-level drop rates -------
+    if (acc_node_keep_sum is not None) and (acc_edge_keep_sum is not None):
+        node_keep_micro = acc_node_keep_sum / max(acc_node_cnt, 1)
+        edge_keep_micro = acc_edge_keep_sum / max(acc_edge_cnt, 1)
+        node_drop_micro = (1.0 - node_keep_micro).tolist()
+        edge_drop_micro = (1.0 - edge_keep_micro).tolist()
 
-    node_batch = getattr(data, 'batch', None)
-    edge_batch = data.batch[data.edge_index[0]] if node_batch is not None else None
+        node_keep_macro = acc_node_keep_pg_sum / max(acc_node_pg_count, 1) if acc_node_keep_pg_sum is not None else None
+        edge_keep_macro = acc_edge_keep_pg_sum / max(acc_edge_pg_count, 1) if acc_edge_keep_pg_sum is not None else None
+        node_drop_macro = (1.0 - node_keep_macro).tolist() if node_keep_macro is not None else None
+        edge_drop_macro = (1.0 - edge_keep_macro).tolist() if edge_keep_macro is not None else None
 
-    def _per_expert_drop_stats_per_graph(mask, batch_idx, is_feat=False):
-        if mask is None or batch_idx is None:
-            return None, None
-        x = mask.float()
-        x = x.mean(dim=2) if is_feat else x.squeeze(-1)  # -> (N_or_E, K)
-        num_graphs = int(batch_idx.max().item()) + 1
-        drop_mean, drop_std = [], []
-        for k in range(x.size(1)):
-            keep_sum = torch.zeros(num_graphs, device=x.device)
-            count_sum = torch.zeros(num_graphs, device=x.device)
-            keep_sum.scatter_add_(0, batch_idx, x[:, k])
-            count_sum.scatter_add_(0, batch_idx, torch.ones_like(x[:, k]))
-            keep_pg = keep_sum / (count_sum + 1e-8)
-            drop_pg = 1.0 - keep_pg
-            drop_mean.append(drop_pg.mean()); drop_std.append(drop_pg.std(unbiased=False))
-        return torch.stack(drop_mean), torch.stack(drop_std)
+        # print("\n[Epoch mask drop rates] micro (size-weighted across all items):")
+        # for i, (nd, ed) in enumerate(zip(node_drop_micro, edge_drop_micro)):
+        #     print(f"  Expert {i}: node={nd:.3f}, edge={ed:.3f}")
 
-    if nm is not None and em is not None and node_batch is not None and edge_batch is not None:
-        node_drop, node_std = _per_expert_drop_stats_per_graph(nm, node_batch, is_feat=False)
-        edge_drop, edge_std = _per_expert_drop_stats_per_graph(em, edge_batch, is_feat=False)
-        print("\nPer-expert mask drop rates across graphs (mean ± std) from last batch:")
-        for i in range(node_drop.numel()):
-            print(
-                f"  Expert {i}: "
-                f"node={node_drop[i].item():.3f}±{node_std[i].item():.3f}, "
-                f"edge={edge_drop[i].item():.3f}±{edge_std[i].item():.3f}"
-            )
-    else:
-        print("\n[Warn] Mask tensors or batch indices not found; skip per-graph mask stats.")
+        if node_drop_macro is not None:
+            print("\n[Epoch mask drop rates] macro (mean across graphs):")
+            for i, (nd, ed) in enumerate(zip(node_drop_macro, edge_drop_macro)):
+                print(f"  Expert {i}: node={nd:.3f}, edge={ed:.3f}")
+
+        # also return in metrics for logging
+        metrics['node_drop_micro'] = node_drop_micro
+        metrics['edge_drop_micro'] = edge_drop_micro
+        if node_drop_macro is not None:
+            metrics['node_drop_macro'] = node_drop_macro
+            metrics['edge_drop_macro'] = edge_drop_macro
+    # -----------------------------------------------------------
 
     gc.collect(); torch.cuda.empty_cache()
     return metrics
@@ -237,6 +273,13 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     else:
         verbose = model.verbose
         model.set_epoch(epoch)
+
+    # ------- NEW: epoch-level accumulators for mask keep/drop -------
+    acc_node_keep_sum = None; acc_node_cnt = 0
+    acc_edge_keep_sum = None; acc_edge_cnt = 0
+    acc_node_keep_pg_sum = None; acc_node_pg_count = 0
+    acc_edge_keep_pg_sum = None; acc_edge_pg_count = 0
+    # ----------------------------------------------------------------
 
     pbar = tqdm(loader, desc='Evaluating MoEUIL', leave=False)
     for data in pbar:
@@ -295,6 +338,46 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         total_load_loss += aggregated_outputs['loss_load'].item() * batch_size
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
+
+        # ------- NEW: accumulate mask stats from THIS batch -------
+        nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
+        em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
+        if (nm is not None) and (em is not None):
+            node_batch = data.batch
+            edge_batch = data.batch[data.edge_index[0]]
+
+            Xn = nm.detach().float().squeeze(-1)   # (N,K)
+            Xe = em.detach().float().squeeze(-1)   # (E,K)
+
+            # micro
+            kn = Xn.sum(dim=0).cpu()
+            ke = Xe.sum(dim=0).cpu()
+            acc_node_keep_sum = kn if acc_node_keep_sum is None else acc_node_keep_sum + kn
+            acc_edge_keep_sum = ke if acc_edge_keep_sum is None else acc_edge_keep_sum + ke
+            acc_node_cnt += Xn.size(0)
+            acc_edge_cnt += Xe.size(0)
+
+            # macro
+            G_n = int(node_batch.max().item()) + 1
+            G_e = int(edge_batch.max().item()) + 1
+
+            keep_sum_pg_n = torch.zeros(G_n, Xn.size(1), device=Xn.device)
+            cnt_sum_pg_n  = torch.zeros(G_n, Xn.size(1), device=Xn.device)
+            keep_sum_pg_n.index_add_(0, node_batch, Xn)
+            cnt_sum_pg_n.index_add_(0, node_batch, torch.ones_like(Xn))
+            keep_pg_n = (keep_sum_pg_n / (cnt_sum_pg_n + 1e-8)).mean(dim=0).cpu()
+
+            keep_sum_pg_e = torch.zeros(G_e, Xe.size(1), device=Xe.device)
+            cnt_sum_pg_e  = torch.zeros(G_e, Xe.size(1), device=Xe.device)
+            keep_sum_pg_e.index_add_(0, edge_batch, Xe)
+            cnt_sum_pg_e.index_add_(0, edge_batch, torch.ones_like(Xe))
+            keep_pg_e = (keep_sum_pg_e / (cnt_sum_pg_e + 1e-8)).mean(dim=0).cpu()
+
+            acc_node_keep_pg_sum = keep_pg_n if acc_node_keep_pg_sum is None else acc_node_keep_pg_sum + keep_pg_n
+            acc_edge_keep_pg_sum = keep_pg_e if acc_edge_keep_pg_sum is None else acc_edge_keep_pg_sum + keep_pg_e
+            acc_node_pg_count += 1
+            acc_edge_pg_count += 1
+        # ----------------------------------------------------------
 
     # shapes now consistent: concat along batch dimension
     gate_weights_all = torch.cat(gate_weight_accumulator, dim=0)  # (N, K)
@@ -361,42 +444,33 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     metrics['loss_load'] = total_load_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
 
-    # --- FIX: last-batch mask stats via data.batch / edge_index ---
-    nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
-    em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
+    # ------- NEW: epoch-level drop rates -------
+    if (acc_node_keep_sum is not None) and (acc_edge_keep_sum is not None):
+        node_keep_micro = acc_node_keep_sum / max(acc_node_cnt, 1)
+        edge_keep_micro = acc_edge_keep_sum / max(acc_edge_cnt, 1)
+        node_drop_micro = (1.0 - node_keep_micro).tolist()
+        edge_drop_micro = (1.0 - edge_keep_micro).tolist()
 
-    node_batch = getattr(data, 'batch', None)
-    edge_batch = data.batch[data.edge_index[0]] if node_batch is not None else None
+        node_keep_macro = acc_node_keep_pg_sum / max(acc_node_pg_count, 1) if acc_node_keep_pg_sum is not None else None
+        edge_keep_macro = acc_edge_keep_pg_sum / max(acc_edge_pg_count, 1) if acc_edge_keep_pg_sum is not None else None
+        node_drop_macro = (1.0 - node_keep_macro).tolist() if node_keep_macro is not None else None
+        edge_drop_macro = (1.0 - edge_keep_macro).tolist() if edge_keep_macro is not None else None
 
-    def _per_expert_drop_stats_per_graph(mask, batch_idx, is_feat=False):
-        if mask is None or batch_idx is None:
-            return None, None
-        x = mask.float()
-        x = x.mean(dim=2) if is_feat else x.squeeze(-1)
-        num_graphs = int(batch_idx.max().item()) + 1
-        drop_mean, drop_std = [], []
-        for k in range(x.size(1)):
-            keep_sum = torch.zeros(num_graphs, device=x.device)
-            count_sum = torch.zeros(num_graphs, device=x.device)
-            keep_sum.scatter_add_(0, batch_idx, x[:, k])
-            count_sum.scatter_add_(0, batch_idx, torch.ones_like(x[:, k]))
-            keep_pg = keep_sum / (count_sum + 1e-8)
-            drop_pg = 1.0 - keep_pg
-            drop_mean.append(drop_pg.mean()); drop_std.append(drop_pg.std(unbiased=False))
-        return torch.stack(drop_mean), torch.stack(drop_std)
+        # print("\n[Epoch mask drop rates] micro (size-weighted across all items):")
+        # for i, (nd, ed) in enumerate(zip(node_drop_micro, edge_drop_micro)):
+        #     print(f"  Expert {i}: node={nd:.3f}, edge={ed:.3f}")
 
-    if nm is not None and em is not None and node_batch is not None and edge_batch is not None:
-        node_drop, node_std = _per_expert_drop_stats_per_graph(nm, node_batch, is_feat=False)
-        edge_drop, edge_std = _per_expert_drop_stats_per_graph(em, edge_batch, is_feat=False)
-        print("\nPer-expert mask drop rates across graphs (mean ± std) from last batch:")
-        for i in range(node_drop.numel()):
-            print(
-                f"  Expert {i}: "
-                f"node={node_drop[i].item():.3f}±{node_std[i].item():.3f}, "
-                f"edge={edge_drop[i].item():.3f}±{edge_std[i].item():.3f}"
-            )
-    else:
-        print("\n[Warn] Mask tensors or batch indices not found; skip per-graph mask stats.")
+        if node_drop_macro is not None:
+            print("\n[Epoch mask drop rates] macro (mean across graphs):")
+            for i, (nd, ed) in enumerate(zip(node_drop_macro, edge_drop_macro)):
+                print(f"  Expert {i}: node={nd:.3f}, edge={ed:.3f}")
+
+        metrics['node_drop_micro'] = node_drop_micro
+        metrics['edge_drop_micro'] = edge_drop_micro
+        if node_drop_macro is not None:
+            metrics['node_drop_macro'] = node_drop_macro
+            metrics['edge_drop_macro'] = edge_drop_macro
+    # ------------------------------------------
 
     gc.collect(); torch.cuda.empty_cache()
     return metrics
