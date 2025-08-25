@@ -36,7 +36,7 @@ model:
   global_pooling: "sum"  # Options: mean, sum, max
   weight_str: 0.0
   weight_la: 0.2
-  weight_ea: 0.2
+  weight_ea: 0.02
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 1.0
