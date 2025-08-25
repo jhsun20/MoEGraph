@@ -5,7 +5,6 @@ CONFIGS=(
   "config/config_motif_size.yaml"
   "config/config_motif_basis.yaml"
   "config/config_cmnist.yaml"
-  "config/config_hiv_size.yaml"
 )
 
 # Run each config sequentially
