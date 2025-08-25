@@ -126,10 +126,10 @@ class MoE(nn.Module):
         agg_logits = weighted.sum(dim=1)                              # (B, C)
 
         # CE aggregated per expert, per sample
-        ce = self._gate_weighted_ce(expert_logits.transpose(0, 1), targets, gate_probs.transpose(0, 1), self.metric, self.num_classes)
+        ce = self._gate_weighted_ce(expert_logits.transpose(0, 1), targets, gate_probs.transpose(0, 1))
 
         # Other per-expert losses (scalars) — combine via avg gate weights over batch
-        avg_gate = gate_probs.mean(dim=0)  # (K,)
+        avg_gate = gate_probs.mean(dim=0).detach()  # (K,)
         reg = (avg_gate * shared_out['loss_reg_list']).sum()
         la = (avg_gate * shared_out['loss_la_list']).sum()
         ea = (avg_gate * shared_out['loss_ea_list']).sum()
@@ -146,8 +146,8 @@ class MoE(nn.Module):
             'loss_total': total,
             'loss_ce': ce,
             'loss_reg': reg,
-            'loss_la': la,
-            'loss_ea': ea,
+            'loss_la': la * self.weight_la,
+            'loss_ea': ea * self.weight_ea,
             'loss_str': strl,
             'loss_div': div,
             'loss_load': load,
@@ -159,37 +159,17 @@ class MoE(nn.Module):
         }
 
     @staticmethod
-    def _gate_weighted_ce(stacked_logits, targets, gate_weights, metric, num_classes):
+    def _gate_weighted_ce(stacked_logits, targets, gate_weights):
         """
         stacked_logits: (K, B, C)
         gate_weights:   (K, B)
         """
         K, B, _ = stacked_logits.shape
         # print(f"metric: {metric}, num_classes: {num_classes}")
-        if metric == 'MAE' and num_classes == 1:
-            # expect C == 1
-            pred = stacked_logits[..., 0]       # (K, B)
-            tgt  = targets.view(B).to(pred.dtype)  # (B,)
-
-            # elementwise absolute error, no reduction
-            per_exp_sample = F.l1_loss(pred, tgt.unsqueeze(0).expand_as(pred), reduction='none')  # (K,B)
-
-            # gate-weighted mean across experts and batch
-            loss = (gate_weights * per_exp_sample).mean()
-        elif metric == 'Accuracy' and num_classes == 1:
-        # one logit per sample
-            logits = stacked_logits[..., 0]      # (K,B)
-            tgt    = targets.view(B).to(logits.dtype)  # (B,)
-            # BCEWithLogits per-sample per-expert
-            per_exp_sample = F.binary_cross_entropy_with_logits(
-                logits, tgt.unsqueeze(0).expand_as(logits), reduction='none'
-            )  # (K,B)
-            loss = (gate_weights * per_exp_sample).mean()
-        else:
-            loss = stacked_logits[0, :, 0].new_tensor(0.0)
-            for k in range(K):
-                ce_per_sample = F.cross_entropy(stacked_logits[k], targets, reduction='none')  # (B,)
-                loss += (gate_weights[k] * ce_per_sample).mean()
+        loss = stacked_logits[0, :, 0].new_tensor(0.0)
+        for k in range(K):
+            ce_per_sample = F.cross_entropy(stacked_logits[k], targets, reduction='none')  # (B,)
+            loss += (gate_weights[k] * ce_per_sample).mean()
         return loss
 
     @staticmethod
