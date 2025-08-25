@@ -21,7 +21,6 @@ def get_model(config, dataset_info):
     hidden_dim = model_config['hidden_dim']
     num_layers = model_config['num_layers']
     dropout = model_config['dropout']
-    pooling = model_config['pooling']
     
     # Create model based on type
     if model_type == 'GCN':
