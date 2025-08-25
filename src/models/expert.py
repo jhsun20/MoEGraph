@@ -307,7 +307,7 @@ class Experts(nn.Module):
                             )
                     spur_env_logits = self.expert_env_classifiers[k](h_spur_env)
                     ce_env = self._ce(spur_env_logits, env_labels)
-                    ce_list[-1] += ce_env
+                    ce_list[-1] += 0.1 * ce_env
 
                     if self._lambda_L > 0:
                         with self._frozen_params(self.classifier_encoder, freeze_bn_running_stats=True):
