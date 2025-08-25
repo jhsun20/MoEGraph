@@ -316,7 +316,7 @@ class Experts(nn.Module):
                 reg_list.append(reg)
 
                 if not is_eval:
-                    h_spur_env = self._encode_complement_subgraph(
+                    h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
                                 data=data,
                                 node_mask=node_mask_k,           # (N,1) or (N,)
                                 edge_mask=edge_mask_k.view(-1),  # (E,)
@@ -324,13 +324,13 @@ class Experts(nn.Module):
                                 symmetrize=False,              # set True if you want undirected EW averaging
                             )
                     edge_weight_k = edge_mask_k.view(-1)
-                    spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env, edge_index, edge_weight=edge_weight_k, batch=batch)
+                    spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env, edge_index, edge_weight=edge_weight_spur_env, batch=batch)
                     ce_env = self._ce(spur_env_logits, env_labels)
                     ce_list[-1] += 0.01 * ce_env
 
                     if self._lambda_L > 0:
                         with self._frozen_params(self.classifier_encoder, freeze_bn_running_stats=True):
-                            h_spur = self._encode_complement_subgraph(
+                            h_spur, edge_weight_spur = self._encode_complement_subgraph(
                                     data=data,
                                     node_mask=node_mask_k,           # (N,1) or (N,)
                                     edge_mask=edge_mask_k.view(-1),  # (E,)
@@ -344,6 +344,7 @@ class Experts(nn.Module):
                                 h_spur=h_spur,
                                 expert_idx=k,
                                 edge_index=edge_index,
+                                edge_weight=edge_weight_spur,
                                 batch=batch
                             ) * self._lambda_L
                     else:
@@ -361,6 +362,7 @@ class Experts(nn.Module):
                             expert_idx=k,
                             env_labels=env_labels,
                             edge_index=edge_index,
+                            edge_weight=edge_weight_k,
                             batch=batch
                         ) * self._lambda_E
 
@@ -656,6 +658,7 @@ class Experts(nn.Module):
         expert_idx: Optional[int] = None,
         env_labels: Optional[torch.Tensor] = None,
         edge_index: Optional[torch.Tensor] = None,
+        edge_weight: Optional[torch.Tensor] = None,
         batch: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         device = h_masked.device
@@ -687,7 +690,7 @@ class Experts(nn.Module):
                             f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
         # 3) adversarial logits (GRL applies the reversed grad only to features)
         h_ea_adv = grad_reverse(h_ea, 1)          # scale via λ_E here
-        logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv, edge_index, batch=batch)   # (B, num_envs)
+        logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv, edge_index, edge_weight=edge_weight, batch=batch)   # (B, num_envs)
         if logits_E.size(1) != self.num_envs:
             raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
         # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
@@ -702,6 +705,7 @@ class Experts(nn.Module):
         h_spur: Optional[torch.Tensor] = None,    # (B, H_spur)
         expert_idx: Optional[int] = None,
         edge_index: Optional[torch.Tensor] = None,
+        edge_weight: Optional[torch.Tensor] = None,
         batch: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         device = h_masked.device
@@ -726,7 +730,7 @@ class Experts(nn.Module):
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
         la = h_masked.new_tensor(0.0)
         # ----- Classification head (existing path) -----
-        logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv, edge_index, batch=batch)     # (B, num_classes)
+        logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv, edge_index, edge_weight=edge_weight, batch=batch)     # (B, num_classes)
         la = F.cross_entropy(logits_y_spur, labels)
         return la
     
@@ -883,7 +887,7 @@ class Experts(nn.Module):
 
         # --- encode + pool ---
         Z_spur = encoder(x_spur, ei, batch=batch, edge_weight=ew_spur)
-        return Z_spur
+        return Z_spur, ew_spur
     
     def enforce_edge_mask_symmetry(self, edge_index: torch.Tensor,
                                 edge_mask: torch.Tensor,

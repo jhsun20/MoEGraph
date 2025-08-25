@@ -45,7 +45,7 @@ class MoE(nn.Module):
         gate_hidden    = config['gate']['hidden_dim']
         gate_depth     = config['gate']['depth']
         dropout        = config['model']['dropout']
-        self.gate_enc  = GINEncoderWithEdgeWeight(self.num_features, gate_hidden, gate_depth, dropout, train_eps=True, global)
+        self.gate_enc  = GINEncoderWithEdgeWeight(self.num_features, gate_hidden, gate_depth, dropout, train_eps=True, global_pooling='mean')
         self.gate_mlp  = nn.Sequential(nn.Linear(gate_hidden, gate_hidden),
                                        nn.ReLU(),
                                        nn.Linear(gate_hidden, self.num_experts))
@@ -109,7 +109,6 @@ class MoE(nn.Module):
     def _gate_logits_raw(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         h = self.gate_enc(x, edge_index, batch=batch)
-        h = global_mean_pool(h, batch)
         return self.gate_mlp(h)  # (B, K)
 
     def _aggregate(self, shared_out, gate_probs, targets):
