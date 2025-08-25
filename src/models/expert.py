@@ -307,7 +307,7 @@ class Experts(nn.Module):
                             )
                     spur_env_logits = self.expert_env_classifiers[k](h_spur_env)
                     ce_env = self._ce(spur_env_logits, env_labels)
-                    ce_list[-1] += 0.1 * ce_env
+                    ce_list[-1] += 0.01 * ce_env
 
                     if self._lambda_L > 0:
                         with self._frozen_params(self.classifier_encoder, freeze_bn_running_stats=True):
@@ -350,7 +350,8 @@ class Experts(nn.Module):
                     else:
                         ea = hC_k.new_tensor(0.0)
 
-                    if self._weight_str_live > 0:
+                    # if self._weight_str_live > 0:
+                    if False:
                         # Encode complement (spur) with the per‑expert LC encoder,
                         # but freeze that encoder for the necessity pass.
                         #with self._frozen_params(self.lc_encoders[0], freeze_bn_running_stats=True):
