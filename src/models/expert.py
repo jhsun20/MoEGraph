@@ -165,8 +165,8 @@ class Experts(nn.Module):
         ])
 
         # Keep-rate priors (trainable) per expert for regularization
-        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
-        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.8))
+        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.5))
+        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.5))
 
         # print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
 
@@ -346,7 +346,7 @@ class Experts(nn.Module):
                                 edge_index=edge_index,
                                 edge_weight=edge_weight_spur,
                                 batch=batch
-                            ) * self._lambda_L
+                            )
                     else:
                         la = hC_k.new_tensor(0.0)
 
@@ -364,7 +364,7 @@ class Experts(nn.Module):
                             edge_index=edge_index,
                             edge_weight=edge_weight_k,
                             batch=batch
-                        ) * self._lambda_E
+                        )
 
                     else:
                         ea = hC_k.new_tensor(0.0)
@@ -689,7 +689,7 @@ class Experts(nn.Module):
             raise ValueError(f"env_labels must be in [0, {self.num_envs-1}] "
                             f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
         # 3) adversarial logits (GRL applies the reversed grad only to features)
-        h_ea_adv = grad_reverse(h_ea, 1)          # scale via λ_E here
+        h_ea_adv = grad_reverse(h_ea, self.lambda_E)          # scale via λ_E here
         logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv, edge_index, edge_weight=edge_weight, batch=batch)   # (B, num_envs)
         if logits_E.size(1) != self.num_envs:
             raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
@@ -725,7 +725,7 @@ class Experts(nn.Module):
         # vib = self._beta_ib * kl_ps.mean()
 
         # --- LA on complement embedding ---
-        h_spur_adv = grad_reverse(h_spur, 1)
+        h_spur_adv = grad_reverse(h_spur, self.lambda_L)
         if h_spur is None:
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
         la = h_masked.new_tensor(0.0)
