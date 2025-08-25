@@ -35,7 +35,7 @@ model:
   dropout: 0.5
   global_pooling: "sum"  # Options: mean, sum, max
   weight_str: 0.0
-  weight_la: 0.2
+  weight_la: 0.5
   weight_ea: 0.02
   weight_reg: 1.0
   weight_ce: 1.0
@@ -74,4 +74,4 @@ gate:
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 20
+  train_after: 15
