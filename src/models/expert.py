@@ -75,14 +75,14 @@ class Experts(nn.Module):
 
         # ---------- Schedulers (mask temp, LA ramp, IB ramp, STR ramp) ----------
         # LA (label adversary) target
-        self.lambda_L_end = float(mcfg.get('lambda_L_end', 1))
+        self.lambda_L_end = float(mcfg.get('lambda_L_end', self.weight_la))
         self.adv_warmup_epochs = int(mcfg.get('adv_warmup_epochs', 5))
         self.adv_ramp_epochs   = int(mcfg.get('adv_ramp_epochs', 5))
         self._lambda_L = 0.0  # live value
 
         # Environment inference + EA scheduling (mirrors your LA/IB ramps)
         self.env_inference = bool(mcfg.get('env_inference', True))
-        self.lambda_E_end = float(mcfg.get('lambda_E_end', 1))
+        self.lambda_E_end = float(mcfg.get('lambda_E_end', self.weight_ea))
         self.ea_warmup_epochs = int(mcfg.get('ea_warmup_epochs', self.adv_warmup_epochs))
         self.ea_ramp_epochs   = int(mcfg.get('ea_ramp_epochs',   self.adv_ramp_epochs))
         self._lambda_E = 0.0  # live value updated in set_epoch
@@ -384,7 +384,7 @@ class Experts(nn.Module):
                                 edge_weight=edge_weight_spur,
                                 batch=batch,
                                 cf_mode="entropy"
-                            ) * self.weight_la
+                            ) * self._lambda_L
                     else:
                         la = hC_k.new_tensor(0.0)
 
@@ -402,7 +402,7 @@ class Experts(nn.Module):
                             edge_weight=edge_weight_k,
                             batch=batch,
                             cf_mode="entropy"
-                        ) * self.weight_ea
+                        ) * self._lambda_E
 
                     else:
                         ea = hC_k.new_tensor(0.0)
