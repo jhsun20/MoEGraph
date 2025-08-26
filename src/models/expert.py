@@ -315,7 +315,7 @@ class Experts(nn.Module):
                 ) * self.weight_reg
                 reg_list.append(reg)
 
-                if True:
+                if not is_eval:
                     h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
                                 data=data,
                                 node_mask=node_mask_k,           # (N,1) or (N,)
