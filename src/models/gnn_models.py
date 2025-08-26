@@ -255,11 +255,11 @@ class ExpertClassifier(nn.Module):
         h = self.encoder(x, edge_index, edge_weight, batch)  # → [B, hidden_dim]
         out = self.mlp(h)  # → [B, num_classes]
         return out
-
+    
 
 def masked_global_mean_pool(x, batch, node_weight):
-    # node_weight: (N,) in [0,1]
-    w = node_weight.view(-1, 1)           # (N,1)
-    numer = global_add_pool(x * w, batch) # (B,H)
-    denom = global_add_pool(w, batch)     # (B,1)
-    return numer / denom.clamp_min(1e-8)
+    # Assumes x has already been masked upstream (e.g., x = x * node_mask)
+    w = node_weight.view(-1, 1).to(x.dtype)              # (N,1)
+    numer = global_add_pool(x, batch)                    # sum of (already-masked) node features
+    denom = global_add_pool(w, batch).clamp_min(1e-8)    # sum of kept-node weights
+    return numer / denom
