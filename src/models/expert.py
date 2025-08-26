@@ -127,9 +127,11 @@ class Experts(nn.Module):
         ])
 
         # Classifier encoder (masked pass)
-        self.classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling
-        )
+        self.classifier_encoders = nn.ModuleList([
+            GINEncoderWithEdgeWeight(
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling)
+        for _ in range(self.num_experts)
+        ])
 
         # Per-expert classifiers
         self.expert_classifiers_causal = nn.ModuleList([
@@ -301,7 +303,7 @@ class Experts(nn.Module):
             edge_weight = edge_mask.view(-1)
 
 
-            h_stable = self.classifier_encoder(masked_x, edge_index, edge_weight=edge_weight, batch=batch)
+            h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch)
 
             # Classify with your existing per-expert classifier
             logit = self.expert_classifiers_causal[k](h_stable)
