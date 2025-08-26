@@ -182,7 +182,6 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     # --- FIX: use last batch’s Data to get batch indices for stats (no cached_masks) ---
     nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
     em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
-    fm = aggregated_outputs.get('feat_masks', None)    # (N, K, D)
 
     node_batch = getattr(data, 'batch', None)
     edge_batch = data.batch[data.edge_index[0]] if node_batch is not None else None
@@ -207,14 +206,12 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     if nm is not None and em is not None and fm is not None and node_batch is not None and edge_batch is not None:
         node_drop, node_std = _per_expert_drop_stats_per_graph(nm, node_batch, is_feat=False)
         edge_drop, edge_std = _per_expert_drop_stats_per_graph(em, edge_batch, is_feat=False)
-        feat_drop, feat_std = _per_expert_drop_stats_per_graph(fm, node_batch, is_feat=True)
         print("\nPer-expert mask drop rates across graphs (mean ± std) from last batch:")
         for i in range(node_drop.numel()):
             print(
                 f"  Expert {i}: "
                 f"node={node_drop[i].item():.3f}±{node_std[i].item():.3f}, "
-                f"edge={edge_drop[i].item():.3f}±{edge_std[i].item():.3f}, "
-                f"feat={feat_drop[i].item():.3f}±{feat_std[i].item():.3f}"
+                f"edge={edge_drop[i].item():.3f}±{edge_std[i].item():.3f}"
             )
     else:
         print("\n[Warn] Mask tensors or batch indices not found; skip per-graph mask stats.")
@@ -367,7 +364,6 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     # --- FIX: last-batch mask stats via data.batch / edge_index ---
     nm = aggregated_outputs.get('node_masks', None)    # (N, K, 1)
     em = aggregated_outputs.get('edge_masks', None)    # (E, K, 1)
-    fm = aggregated_outputs.get('feat_masks', None)    # (N, K, D)
 
     node_batch = getattr(data, 'batch', None)
     edge_batch = data.batch[data.edge_index[0]] if node_batch is not None else None
@@ -392,14 +388,12 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     if nm is not None and em is not None and fm is not None and node_batch is not None and edge_batch is not None:
         node_drop, node_std = _per_expert_drop_stats_per_graph(nm, node_batch, is_feat=False)
         edge_drop, edge_std = _per_expert_drop_stats_per_graph(em, edge_batch, is_feat=False)
-        feat_drop, feat_std = _per_expert_drop_stats_per_graph(fm, node_batch, is_feat=True)
         print("\nPer-expert mask drop rates across graphs (mean ± std) from last batch:")
         for i in range(node_drop.numel()):
             print(
                 f"  Expert {i}: "
                 f"node={node_drop[i].item():.3f}±{node_std[i].item():.3f}, "
-                f"edge={edge_drop[i].item():.3f}±{edge_std[i].item():.3f}, "
-                f"feat={feat_drop[i].item():.3f}±{feat_std[i].item():.3f}"
+                f"edge={edge_drop[i].item():.3f}±{edge_std[i].item():.3f}"
             )
     else:
         print("\n[Warn] Mask tensors or batch indices not found; skip per-graph mask stats.")
@@ -515,7 +509,7 @@ def train(config, trial=None):
                 train_metrics = train_epoch_moe(model, train_loader, optimizer, dataset_info, device, epoch, config)
                 # Validate on OOD validation set
                 # val_metrics = evaluate_moe(model, val_loader, device, metric_type, epoch, config)
-                val_metrics = evaluate_moe(model, test_loader, device, metric_type, epoch, config)
+                val_metrics = evaluate_moe(model, val_loader, device, metric_type, epoch, config)
                 # Validate on in-distribution validation set
                 if not is_tuning:
                     #id_val_metrics = evaluate_moe(model, id_val_loader, device, metric_type, epoch, config)

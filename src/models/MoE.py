@@ -138,32 +138,25 @@ class MoE(nn.Module):
 
         # Diversity (already scalar); Load-balance on gate (optional)
         div = shared_out['loss_div']
-        load = self._load_balance(gate_probs)
+        load = self._load_balance(gate_probs) * self.weight_load
 
-        total = (self.weight_ce * ce +
-                 self.weight_reg * reg +
-                 self.weight_la * la +
-                 self.weight_ea * ea +
-                 self.weight_str * strl +
-                 self.weight_div * div +
-                 self.weight_load * load)
+        total = (ce + reg + la + ea + strl + div + load)
 
         return {
             'logits': agg_logits,
             'loss_total': total,
-            'loss_ce': ce * self.weight_ce,
-            'loss_reg': reg * self.weight_reg,
-            'loss_la': la * self.weight_la,
-            'loss_ea': ea * self.weight_ea,
-            'loss_str': strl * self.weight_str,
-            'loss_div': div * self.weight_div,
-            'loss_load': load * self.weight_load,
+            'loss_ce': ce,
+            'loss_reg': reg,
+            'loss_la': la,
+            'loss_ea': ea,
+            'loss_str': strl,
+            'loss_div': div,
+            'loss_load': load,
             'gate_weights': gate_probs,              # (B, K)
             'rho': shared_out['rho'],
             'expert_logits': expert_logits,         # (B, K, C)
             'node_masks': shared_out['node_masks'],
-            'edge_masks': shared_out['edge_masks'],
-            'feat_masks': shared_out['feat_masks'],
+            'edge_masks': shared_out['edge_masks']
         }
 
     @staticmethod
@@ -174,30 +167,10 @@ class MoE(nn.Module):
         """
         K, B, _ = stacked_logits.shape
         # print(f"metric: {metric}, num_classes: {num_classes}")
-        if metric == 'MAE' and num_classes == 1:
-            # expect C == 1
-            pred = stacked_logits[..., 0]       # (K, B)
-            tgt  = targets.view(B).to(pred.dtype)  # (B,)
-
-            # elementwise absolute error, no reduction
-            per_exp_sample = F.l1_loss(pred, tgt.unsqueeze(0).expand_as(pred), reduction='none')  # (K,B)
-
-            # gate-weighted mean across experts and batch
-            loss = (gate_weights * per_exp_sample).mean()
-        elif metric == 'Accuracy' and num_classes == 1:
-        # one logit per sample
-            logits = stacked_logits[..., 0]      # (K,B)
-            tgt    = targets.view(B).to(logits.dtype)  # (B,)
-            # BCEWithLogits per-sample per-expert
-            per_exp_sample = F.binary_cross_entropy_with_logits(
-                logits, tgt.unsqueeze(0).expand_as(logits), reduction='none'
-            )  # (K,B)
-            loss = (gate_weights * per_exp_sample).mean()
-        else:
-            loss = stacked_logits[0, :, 0].new_tensor(0.0)
-            for k in range(K):
-                ce_per_sample = F.cross_entropy(stacked_logits[k], targets, reduction='none')  # (B,)
-                loss += (gate_weights[k] * ce_per_sample).mean()
+        loss = stacked_logits[0, :, 0].new_tensor(0.0)
+        for k in range(K):
+            ce_per_sample = F.cross_entropy(stacked_logits[k], targets, reduction='none')  # (B,)
+            loss += (gate_weights[k] * ce_per_sample).mean()
         return loss
 
     @staticmethod
