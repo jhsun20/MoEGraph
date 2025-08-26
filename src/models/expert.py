@@ -110,18 +110,18 @@ class Experts(nn.Module):
         # Per-expert maskers
         self.expert_node_masks = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim//2, 1)
+                nn.Linear(hidden_dim, 1)
             )
             for _ in range(self.num_experts)
         ])
 
         self.expert_edge_masks = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_dim*2, hidden_dim//2),
+                nn.Linear(hidden_dim*2, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim//2, 1)
+                nn.Linear(hidden_dim, 1)
             )
             for _ in range(self.num_experts)
         ])
@@ -134,18 +134,18 @@ class Experts(nn.Module):
         # Per-expert classifiers
         self.expert_classifiers_causal = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim//2, self.num_classes)
+                nn.Linear(hidden_dim, self.num_classes)
             )
             for _ in range(self.num_experts)
         ])
 
         self.expert_classifiers_spur = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim//2, self.num_classes)
+                nn.Linear(hidden_dim, self.num_classes)
             )
             for _ in range(self.num_experts)
         ])
@@ -157,17 +157,17 @@ class Experts(nn.Module):
 
         self.expert_env_classifiers_causal = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim//2, self.num_envs)
+                nn.Linear(hidden_dim, self.num_envs)
             )
             for _ in range(self.num_experts)
         ])
         self.expert_env_classifiers_spur = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim//2, self.num_envs)
+                nn.Linear(hidden_dim, self.num_envs)
             )
             for _ in range(self.num_experts)
         ])
@@ -178,9 +178,9 @@ class Experts(nn.Module):
 
         self.expert_classifiers_spur = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim//2, self.num_classes)
+                nn.Linear(hidden_dim, self.num_classes)
             )
             for _ in range(self.num_experts)
         ])
