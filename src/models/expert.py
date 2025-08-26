@@ -182,14 +182,14 @@ class Experts(nn.Module):
         for _ in range(self.num_experts)
         ])
 
-        self.expert_classifiers_spur = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, self.num_classes)
-            )
-            for _ in range(self.num_experts)
-        ])
+        # self.expert_classifiers_spur = nn.ModuleList([
+        #     nn.Sequential(
+        #         nn.Linear(hidden_dim, hidden_dim),
+        #         nn.ReLU(),
+        #         nn.Linear(hidden_dim, self.num_classes)
+        #     )
+        #     for _ in range(self.num_experts)
+        # ])
 
         # --- LECI-style tiny GINs for the LA (spur/complement) branch ---
         # self.label_classifier_encoder = GINEncoderWithEdgeWeight(
@@ -278,7 +278,7 @@ class Experts(nn.Module):
             node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
             # Enforce symmetry for edges that have reverse edges
-            edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
+            # edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
             # if k == 0:  # or pick any expert index you want to monitor
             #     report = mask_symmetry_report(edge_index, edge_mask.view(-1))
             #     print(f"[Symmetry check, Expert {k}] {report}")
@@ -305,9 +305,10 @@ class Experts(nn.Module):
             # Apply masks
             masked_x = x * node_mask
             edge_weight = edge_mask.view(-1)
+            node_weight = node_mask.view(-1)
 
 
-            h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch)
+            h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch, node_weight=node_weight)
 
             # Classify with your existing per-expert classifier
             logit = self.expert_classifiers_causal[k](h_stable)
@@ -390,8 +391,9 @@ class Experts(nn.Module):
                         str_loss = ce_env * self.weight_str
 
                         masked_x_k = x * node_mask_k
+                        node_weight_k = node_mask_k.view(-1)
                         edge_weight_k = edge_mask_k.view(-1)
-                        h_stable_env_k = self.env_classifier_encoders[k](masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch)
+                        h_stable_env_k = self.env_classifier_encoders[k](masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch, node_weight=node_weight_k)
 
                         ea = self._causal_loss(
                             h_masked=hC_k,
@@ -978,6 +980,7 @@ class Experts(nn.Module):
         # --- complement masks ---
         node_m_S = 1.0 - node_m                              # (N,1)
         edge_m_S = 1.0 - edge_m                              # (E,)
+        node_w_S = node_m_S.view(-1)  
 
         # --- apply to features (node-wise * feature-wise) ---
         x_spur = (x * node_m_S) # * feat_m_S                   # (N,F)
@@ -988,7 +991,7 @@ class Experts(nn.Module):
             ei, ew_spur = to_undirected(ei, ew_spur, reduce='mean')
 
         # --- encode + pool ---
-        Z_spur = encoder(x_spur, ei, batch=batch, edge_weight=ew_spur)
+        Z_spur = encoder(x_spur, ei, batch=batch, edge_weight=ew_spur, node_weight=node_w_S)
         return Z_spur, ew_spur
     
     def enforce_edge_mask_symmetry(self, edge_index: torch.Tensor,

@@ -214,16 +214,22 @@ class GINEncoderWithEdgeWeight(nn.Module):
 
         self.dropout = float(dropout)
 
-    def forward(self, x, edge_index, edge_weight=None, batch=None):
+    def forward(self, x, edge_index, edge_weight=None, batch=None, node_weight=None):
         for conv, bn, act in zip(self.convs, self.bns, self.acts):
             x = conv(x, edge_index, edge_weight)
             x = bn(x)
             x = act(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         if self.global_pooling == 'mean':
-            x = global_mean_pool(x, batch)
+            if node_weight is None:
+                x = global_mean_pool(x, batch)
+            else:
+                x = masked_global_mean_pool(x, batch, node_weight)
         elif self.global_pooling == 'sum':
-            x = global_add_pool(x, batch)
+            if node_weight is None:
+                x = global_add_pool(x, batch)
+            else:
+                x = global_add_pool(x * node_weight.view(-1,1), batch)
         elif self.global_pooling == 'none':
             pass
         else:
@@ -249,3 +255,11 @@ class ExpertClassifier(nn.Module):
         h = self.encoder(x, edge_index, edge_weight, batch)  # → [B, hidden_dim]
         out = self.mlp(h)  # → [B, num_classes]
         return out
+
+
+def masked_global_mean_pool(x, batch, node_weight):
+    # node_weight: (N,) in [0,1]
+    w = node_weight.view(-1, 1)           # (N,1)
+    numer = global_add_pool(x * w, batch) # (B,H)
+    denom = global_add_pool(w, batch)     # (B,1)
+    return numer / denom.clamp_min(1e-8)
