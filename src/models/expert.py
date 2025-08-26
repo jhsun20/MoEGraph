@@ -165,8 +165,8 @@ class Experts(nn.Module):
         ])
 
         # Keep-rate priors (trainable) per expert for regularization
-        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.5))
-        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.5))
+        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.6))
+        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.6))
 
         # print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
 
@@ -315,7 +315,7 @@ class Experts(nn.Module):
                 ) * self.weight_reg
                 reg_list.append(reg)
 
-                if not is_eval:
+                if True:
                     h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
                                 data=data,
                                 node_mask=node_mask_k,           # (N,1) or (N,)
@@ -635,8 +635,8 @@ class Experts(nn.Module):
         if use_fixed_rho:
             rho_node, rho_edge = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
         else:
-            rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.5)
-            rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.5)
+            rho_node = torch.clamp(self.rho_node[expert_idx], 0.3, 0.6)
+            rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.3, 0.6)
 
         def per_graph_keep(mask_vals, batch_idx):
             G = batch_idx.max().item() + 1

@@ -55,6 +55,8 @@ class MoE(nn.Module):
         self.gate_temperature = float(gcfg.get('temperature', 1.0))    # scales gate_scores
         self.weight_gate      = float(gcfg.get('weight_gate', 1.0))    # total gate loss weight
         self.weight_gate_oracle = float(gcfg.get('weight_oracle', 1.0))# teacher KL weight
+        self.gate_teacher_w_ea = float(gcfg.get('teacher_w_ea', 1.0))  # + means "more invariant" is better
+        self.gate_teacher_w_la = float(gcfg.get('teacher_w_la', 1.0))  # + means "less leakage" is better
         self.current_epoch = 0
 
         if self.verbose:
@@ -71,7 +73,8 @@ class MoE(nn.Module):
         shared_out = self.shared(data, data.y)  # (B,K,C) etc.
 
         # Gate scores from RAW graph
-        gate_scores = self._gate_logits_raw(data)  # (B,K)
+        # gate_scores = self._gate_logits_raw(data)  # (B,K)
+        gate_scores = self._gate_logits_expert_features(data, shared_out)  # (B,K)
 
         # --- NEW: train the gate (independent of routing choice) ---
         gate_loss, p_gate_train = self._compute_gate_loss(shared_out, data.y, gate_scores)
@@ -162,12 +165,31 @@ class MoE(nn.Module):
 
         # ----- Teacher: oracle from per-expert CE (stop-grad) -----
         with torch.no_grad():
+            # Per-sample, per-expert task CE (lower is better)
             ce_per = F.cross_entropy(
-                expert_logits.reshape(B * K, C),
+                expert_logits.reshape(B*K, C),
                 targets.repeat_interleave(K),
                 reduction='none'
-            ).reshape(B, K)  # (B,K)
-            q = F.softmax(-ce_per / self.gate_tau_oracle, dim=1)  # (B,K), teacher
+            ).reshape(B, K)                                       # (B,K)
+
+            # Start from -CE
+            r = -ce_per
+
+            # Add EA/LA signals. You currently return per-expert (batch-mean) scalars:
+            # shared_out['loss_ea_list'], shared_out['loss_la_list']  (K,)
+            # We can broadcast them; later you can switch to per-sample versions (see upgrade).
+            if 'loss_ea_list' in shared_out and self.gate_teacher_w_ea != 0.0:
+                ea_k = shared_out['loss_ea_list'].detach()        # (K,)
+                r = r + self.gate_teacher_w_ea * ea_k.view(1, K).expand_as(r)
+
+            if 'loss_la_list' in shared_out and self.gate_teacher_w_la != 0.0:
+                la_k = shared_out['loss_la_list'].detach()        # (K,)
+                r = r + self.gate_teacher_w_la * la_k.view(1, K).expand_as(r)
+
+            # Optional (recommended): z-score each component along K to stabilize scales
+            # r = zscore(-ce_per) + wE*zscore(ea) + wL*zscore(la)
+
+            q = F.softmax(r / self.gate_tau_oracle, dim=1)        # (B,K), teacher
 
         # ----- Student: gate probabilities from gate_scores (independent of warm-up routing) -----
         scores = gate_scores / max(self.gate_temperature, 1e-6)
@@ -185,6 +207,85 @@ class MoE(nn.Module):
         # Weighted sum; return scalar and p if the caller wants to log/inspect it
         gate_loss = self.weight_gate_oracle * kl + self.weight_load * lb
         return gate_loss, p
+    
+    def _gate_logits_expert_features(self, data, shared_out, eps: float = 1e-12):
+        """
+        Replacement for _gate_logits_raw: builds label-free per-expert features Phi (B,K,d)
+        and maps them to gate scores (B,K) with a tiny row-wise MLP.
+
+        Expects in shared_out:
+        - 'expert_logits': (B,K,C)  [required]
+        - optional: 'weak_kl_list': (B,K)           # KL(p, p_weak_aug)
+        - optional: 'node_masks':   (B,K,N) or (K,N_total)
+        - optional: 'edge_masks':   (B,K,E) or (K,E_total)
+        - optional: 'env_post_causal': (B,K,|E|)
+        - optional: 'label_post_spur': (B,K,C)
+        """
+        import torch
+        import torch.nn.functional as F
+
+        logits = shared_out['expert_logits'].detach()     # (B,K,C)
+        probs  = logits.softmax(dim=-1)
+        B, K, C = probs.shape
+        dev, dtype = probs.device, probs.dtype
+
+        # ---------- A) Confidence proxies ----------
+        maxp    = probs.max(dim=-1).values.unsqueeze(-1)                    # (B,K,1)
+        top2    = probs.topk(k=min(2, C), dim=-1).values
+        margin  = (top2[..., 0] - (top2[..., 1] if C > 1 else 0.)).unsqueeze(-1)
+        entropy = (-(probs.clamp_min(eps) * probs.clamp_min(eps).log())
+                .sum(-1, keepdim=True))                                  # (B,K,1)
+        energy  = (-torch.logsumexp(logits, dim=-1, keepdim=True))          # (B,K,1)
+
+        # ---------- B) Stability (if provided) ----------
+        weak_kl = shared_out.get('weak_kl_list', None)  # (B,K)
+        stab    = (-weak_kl.detach()).unsqueeze(-1) if weak_kl is not None else torch.zeros(B,K,1, device=dev, dtype=dtype)
+
+        # ---------- C) Disagreement (avg sym-KL to others) ----------
+        with torch.no_grad():
+            if K > 1:
+                logp   = probs.clamp_min(eps).log()
+                kl_kj  = (probs.unsqueeze(2) * (logp.unsqueeze(2) - logp.unsqueeze(1))).sum(-1)  # (B,K,K)
+                sym_kl = 0.5*(kl_kj + kl_kj.transpose(1,2))
+                disagree = -(sym_kl.sum(dim=2) / (K - 1)).unsqueeze(-1)      # higher = less disagreement
+            else:
+                disagree = torch.zeros(B,K,1, device=dev, dtype=dtype)
+
+        # ---------- D) Invariance/leakage entropies (label-free) ----------
+        pe_c = shared_out.get('env_post_causal', None)   # (B,K,|E|)
+        env_ent = (-(pe_c.clamp_min(eps) * pe_c.clamp_min(eps).log()).sum(-1, keepdim=True)
+                if pe_c is not None else torch.zeros(B,K,1, device=dev, dtype=dtype))
+        py_s = shared_out.get('label_post_spur', None)   # (B,K,C)
+        leak_ent = (-(py_s.clamp_min(eps) * py_s.clamp_min(eps).log()).sum(-1, keepdim=True)
+                    if py_s is not None else torch.zeros(B,K,1, device=dev, dtype=dtype))
+
+        # ---------- F) Simple graph stats ----------
+        n = torch.tensor([data.num_nodes], device=dev, dtype=dtype).view(1,1,1).expand(B,K,1)
+        m = torch.tensor([data.num_edges], device=dev, dtype=dtype).view(1,1,1).expand(B,K,1)
+
+        # Concatenate features and standardize
+        Phi = torch.cat([
+            maxp, margin, entropy, energy,           # A
+            stab, disagree,                          # B,C
+            env_ent, leak_ent,                       # D  # E
+            n, m                                     # F
+        ], dim=-1)                                   # (B,K,d_phi)
+
+        mu = Phi.mean(dim=(0,1), keepdim=True)
+        sd = Phi.std(dim=(0,1), keepdim=True).clamp_min(1e-3)
+        Phi = (Phi - mu) / sd
+
+        # Row-wise MLP (lazy init) -> scores (B,K)
+        d_phi = Phi.size(-1)
+        if not hasattr(self, "_gate_mlp") or self._gate_mlp is None:
+            self._gate_mlp = nn.Sequential(
+                nn.Linear(d_phi, 64),
+                nn.ReLU(),
+                nn.Linear(64, 1)
+            ).to(dev)
+
+        scores = self._gate_mlp(Phi).squeeze(-1)  # (B,K)
+        return scores
 
     @staticmethod
     def _gate_weighted_ce(stacked_logits, targets, gate_weights):
