@@ -382,7 +382,8 @@ class Experts(nn.Module):
                                 expert_idx=k,
                                 edge_index=edge_index,
                                 edge_weight=edge_weight_spur,
-                                batch=batch
+                                batch=batch,
+                                cf_mode="entropy"
                             ) * self.weight_la
                     else:
                         la = hC_k.new_tensor(0.0)
@@ -399,7 +400,8 @@ class Experts(nn.Module):
                             env_labels=env_labels,
                             edge_index=edge_index,
                             edge_weight=edge_weight_k,
-                            batch=batch
+                            batch=batch,
+                            cf_mode="entropy"
                         ) * self.weight_ea
 
                     else:
@@ -689,50 +691,77 @@ class Experts(nn.Module):
 
     def _causal_loss(
         self,
-        h_masked: torch.Tensor,         # h_C (B, H)
-        h_ea:   Optional[torch.Tensor] = None,    # (B, Hea)
+        h_masked: torch.Tensor,         # h_C (B, H)  -- (usually not used directly here)
+        h_ea:   Optional[torch.Tensor] = None,    # (B, Hea)   -- features given to env head from G_C
         expert_idx: Optional[int] = None,
         env_labels: Optional[torch.Tensor] = None,
         edge_index: Optional[torch.Tensor] = None,
         edge_weight: Optional[torch.Tensor] = None,
         batch: Optional[torch.Tensor] = None,
+        *,
+        cf_mode: str = "revce",                 # same options as spur_loss
+        cf_weights: Optional[dict] = None,
+        tau_prob: float = 0.3,
+        tau_logit: float = 0.0,
     ) -> torch.Tensor:
-        device = h_masked.device
-        B, H = h_masked.shape
+        """
+        Causal->env CF objective. Default is adversarial CE (reverse-CE behavior via GRL).
+        For entropy/KL-style CF, use the same env head as the main EA path, frozen, no GRL.
+        """
+        if h_ea is None:
+            raise ValueError("h_ea (env features from G_C) must be provided")
 
-        # ----- VIB (q(z|h_C)) -----
-        # if self.ib_mu_head_sem is None:
-        #     self.ib_mu_head_sem = nn.Linear(H, H).to(device)
-        #     self.ib_logvar_head_sem = nn.Linear(H, H).to(device)
-        #     nn.init.constant_(self.ib_logvar_head_sem.weight, 0.0)
-        #     nn.init.constant_(self.ib_logvar_head_sem.bias, -5.0)  # small var init
+        if cf_mode == "revce":
+            # ---------- ORIGINAL ADVERSARIAL EA (GRL + CE) ----------
+            env_tgt = env_labels.view(-1).long().to(h_ea.device)
+            if int(env_tgt.max()) >= self.num_envs or int(env_tgt.min()) < 0:
+                raise ValueError(f"env_labels must be in [0, {self.num_envs-1}]")
+            h_ea_adv = grad_reverse(h_ea, self._lambda_E)
+            logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv)
+            if logits_E.size(1) != self.num_envs:
+                raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
+            return F.cross_entropy(logits_E, env_tgt)
 
-        # mu     = self.ib_mu_head_sem(h_masked)
-        # logvar = self.ib_logvar_head_sem(h_masked)
-        # kl_ps  = (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum(dim=1)   # [B]
-        # kl_ps  = torch.clamp(kl_ps - self.ib_free_bits, min=0.0)
-        # vib = self._beta_ib * kl_ps.mean()
+        # ---------- ENTROPY/KL/HINGE PATH (shared env head, frozen, NO GRL) ----------
+        with self._frozen_params(self.expert_env_classifiers_spur[expert_idx], freeze_bn_running_stats=True):
+            logits_env_cf = self.expert_env_classifiers_spur[expert_idx](h_ea)  # (B, num_envs)
 
-        # --- EA on h_ea (environment adversary on G_C) ---
-        ea = h_masked.new_tensor(0.0)
-        # 1) sanitize env labels
-        env_tgt = env_labels.view(-1).long().to(h_ea.device)   # (B,)
-        # 2) sanity checks
-        # if env_tgt.numel() != h_ea.size(0):
-        #     raise ValueError(f"env_labels shape {tuple(env_tgt.shape)} "
-        #                     f"must match batch size {h_ea.size(0)}")
-        if int(env_tgt.max()) >= self.num_envs or int(env_tgt.min()) < 0:
-            raise ValueError(f"env_labels must be in [0, {self.num_envs-1}] "
-                            f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
-        # 3) adversarial logits (GRL applies the reversed grad only to features)
-        h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
-        logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv)   # (B, num_envs)
-        if logits_E.size(1) != self.num_envs:
-            raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
-        # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
-        ea = F.cross_entropy(logits_E, env_tgt)
+        # map cf_mode -> weights
+        w = dict(w_entropy=0.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0, w_true_hinge_logit=0.0, w_one_minus_true=0.0)
+        if cf_mode == "entropy":
+            w["w_entropy"] = 1.0
+        elif cf_mode == "kl_uniform":
+            w["w_kl_uniform"] = 1.0
+        elif cf_mode == "hinge_prob":
+            w["w_true_hinge_prob"] = 1.0
+        elif cf_mode == "hinge_logit":
+            w["w_true_hinge_logit"] = 1.0
+        elif cf_mode == "one_minus_true":
+            w["w_one_minus_true"] = 1.0
+        elif cf_mode == "mix":
+            if cf_weights:
+                for k in w.keys():
+                    if k in cf_weights:
+                        w[k] = float(cf_weights[k])
+            else:
+                w.update(dict(w_entropy=0.8, w_true_hinge_prob=0.2))
+        else:
+            raise ValueError(f"Unknown cf_mode={cf_mode}")
 
-        return ea
+        # we still need env labels for hinges on the "true" env class (when used)
+        env_tgt = env_labels.view(-1).long().to(logits_env_cf.device)
+
+        nec = self._cf_label_necessity_losses(
+            logits_drop=logits_env_cf,
+            target=env_tgt,
+            num_classes=self.num_envs,
+            **w,
+            tau_prob=tau_prob,
+            tau_logit=tau_logit,
+            reduction="mean",
+        )
+        return nec["loss_nec"]
+
     
     def _spur_loss(
         self,
@@ -743,32 +772,70 @@ class Experts(nn.Module):
         edge_index: Optional[torch.Tensor] = None,
         edge_weight: Optional[torch.Tensor] = None,
         batch: Optional[torch.Tensor] = None,
+        *,
+        cf_mode: str = "revce",                 # "revce" | "entropy" | "kl_uniform" | "hinge_prob" | "hinge_logit" | "one_minus_true" | "mix"
+        cf_weights: Optional[dict] = None,      # only used if cf_mode == "mix"; keys are the w_* in _cf_label_necessity_losses
+        tau_prob: float = 0.3,
+        tau_logit: float = 0.0,
     ) -> torch.Tensor:
+        """
+        Spurious->label CF objective. Default is reverse-CE (as before).
+        For entropy/KL-style CF, use the same label head as the main path, frozen.
+        """
         device = h_masked.device
-        B, H = h_masked.shape
-
-        # ----- VIB (q(z|h_C)) -----
-        # if self.ib_mu_head_sem is None:
-        #     self.ib_mu_head_sem = nn.Linear(H, H).to(device)
-        #     self.ib_logvar_head_sem = nn.Linear(H, H).to(device)
-        #     nn.init.constant_(self.ib_logvar_head_sem.weight, 0.0)
-        #     nn.init.constant_(self.ib_logvar_head_sem.bias, -5.0)  # small var init
-
-        # mu     = self.ib_mu_head_sem(h_masked)
-        # logvar = self.ib_logvar_head_sem(h_masked)
-        # kl_ps  = (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).sum(dim=1)   # [B]
-        # kl_ps  = torch.clamp(kl_ps - self.ib_free_bits, min=0.0)
-        # vib = self._beta_ib * kl_ps.mean()
-
-        # --- LA on complement embedding ---
-        h_spur_adv = grad_reverse(h_spur, self._lambda_L)
         if h_spur is None:
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
-        la = h_masked.new_tensor(0.0)
-        # ----- Classification head (existing path) -----
-        logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv)     # (B, num_classes)
-        la = F.cross_entropy(logits_y_spur, labels)
-        return la
+
+        # normalize label shape/type
+        y = labels.view(-1).long()
+
+        if cf_mode == "revce":
+            # ---------- ORIGINAL PATH (reverse CE via GRL on spurious features, separate CF head) ----------
+            h_spur_adv = grad_reverse(h_spur, self._lambda_L)
+            logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv)     # (B, C)
+            la = F.cross_entropy(logits_y_spur, y)
+            return la
+
+        # ---------- ENTROPY/KL/HINGE PATH (shared label head, frozen) ----------
+        # Use the SAME decision boundary as the normal label prediction.
+        # Freeze the head so gradients flow into encoder/masks, not the classifier.
+        with self._frozen_params(self.expert_classifiers_causal[expert_idx], freeze_bn_running_stats=True):
+            logits_cf = self.expert_classifiers_causal[expert_idx](h_spur)  # (B, C) or (B,1)
+
+        # map cf_mode -> weights for _cf_label_necessity_losses
+        w = dict(w_entropy=0.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0, w_true_hinge_logit=0.0, w_one_minus_true=0.0)
+        if cf_mode == "entropy":
+            w["w_entropy"] = 1.0
+        elif cf_mode == "kl_uniform":
+            w["w_kl_uniform"] = 1.0
+        elif cf_mode == "hinge_prob":
+            w["w_true_hinge_prob"] = 1.0
+        elif cf_mode == "hinge_logit":
+            w["w_true_hinge_logit"] = 1.0
+        elif cf_mode == "one_minus_true":
+            w["w_one_minus_true"] = 1.0
+        elif cf_mode == "mix":
+            if cf_weights:
+                for k in w.keys():
+                    if k in cf_weights:
+                        w[k] = float(cf_weights[k])
+            else:
+                # sensible default mix
+                w.update(dict(w_entropy=0.7, w_true_hinge_prob=0.3))
+        else:
+            raise ValueError(f"Unknown cf_mode={cf_mode}")
+
+        nec = self._cf_label_necessity_losses(
+            logits_drop=logits_cf,
+            target=y,
+            num_classes=self.num_classes,
+            **w,
+            tau_prob=tau_prob,
+            tau_logit=tau_logit,
+            reduction="mean",
+        )
+        return nec["loss_nec"]
+
     
     def _kmeans_labels(self, X: torch.Tensor, K: int, iters: int = 10) -> torch.Tensor:
         # X: (B, D)
