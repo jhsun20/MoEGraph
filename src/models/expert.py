@@ -107,6 +107,25 @@ class Experts(nn.Module):
             self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
         )
 
+        # Per-expert maskers
+        self.expert_node_masks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim//2, 1)
+            )
+            for _ in range(self.num_experts)
+        ])
+
+        self.expert_edge_masks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim*2, hidden_dim//2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim//2, 1)
+            )
+            for _ in range(self.num_experts)
+        ])
+
         # Classifier encoder (masked pass)
         self.classifier_encoder = GINEncoderWithEdgeWeight(
             self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
@@ -127,11 +146,21 @@ class Experts(nn.Module):
         self.env_classifier_encoder = GINEncoderWithEdgeWeight(
             self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
         )
+
         self.expert_env_classifiers_causal = nn.ModuleList([
             ExpertClassifier(hidden_dim, self.num_envs, dropout, self.global_pooling)
             for _ in range(self.num_experts)
         ])
         self.expert_env_classifiers_spur = nn.ModuleList([
+            ExpertClassifier(hidden_dim, self.num_envs, dropout, self.global_pooling)
+            for _ in range(self.num_experts)
+        ])
+
+        self.spur_classifier_encoder = GINEncoderWithEdgeWeight(
+            self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
+        )
+
+        self.expert_classifiers_spur = nn.ModuleList([
             ExpertClassifier(hidden_dim, self.num_envs, dropout, self.global_pooling)
             for _ in range(self.num_experts)
         ])
@@ -146,23 +175,7 @@ class Experts(nn.Module):
         #     nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_classes)) for _ in range(self.num_experts)
         # ])
 
-        # Per-expert maskers
-        self.expert_node_masks = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim//2),
-                nn.ReLU(),
-                nn.Linear(hidden_dim//2, 1)
-            )
-            for _ in range(self.num_experts)
-        ])
-        self.expert_edge_masks = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(hidden_dim*2, hidden_dim//2),
-                nn.ReLU(),
-                nn.Linear(hidden_dim//2, 1)
-            )
-            for _ in range(self.num_experts)
-        ])
+
 
         # Keep-rate priors (trainable) per expert for regularization
         self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.6))
@@ -316,27 +329,26 @@ class Experts(nn.Module):
                 reg_list.append(reg)
 
                 if not is_eval:
-                    h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
+                    # h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
+                    #             data=data,
+                    #             node_mask=node_mask_k,           # (N,1) or (N,)
+                    #             edge_mask=edge_mask_k.view(-1),  # (E,)
+                    #             encoder=self.env_classifier_encoder,
+                    #             symmetrize=False,              # set True if you want undirected EW averaging
+                    #         )
+                    # edge_weight_k = edge_mask_k.view(-1)
+                    # spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env, edge_index, edge_weight=edge_weight_spur_env, batch=batch)
+                    # ce_env = self._ce(spur_env_logits, env_labels)
+                    # ce_list[-1] += 0.01 * ce_env
+
+                    if self._lambda_L > 0:
+                        h_spur, edge_weight_spur = self._encode_complement_subgraph(
                                 data=data,
                                 node_mask=node_mask_k,           # (N,1) or (N,)
                                 edge_mask=edge_mask_k.view(-1),  # (E,)
-                                encoder=self.env_classifier_encoder,
+                                encoder=self.spur_classifier_encoder,
                                 symmetrize=False,              # set True if you want undirected EW averaging
                             )
-                    edge_weight_k = edge_mask_k.view(-1)
-                    spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env, edge_index, edge_weight=edge_weight_spur_env, batch=batch)
-                    ce_env = self._ce(spur_env_logits, env_labels)
-                    ce_list[-1] += 0.01 * ce_env
-
-                    if self._lambda_L > 0:
-                        with self._frozen_params(self.classifier_encoder, freeze_bn_running_stats=True):
-                            h_spur, edge_weight_spur = self._encode_complement_subgraph(
-                                    data=data,
-                                    node_mask=node_mask_k,           # (N,1) or (N,)
-                                    edge_mask=edge_mask_k.view(-1),  # (E,)
-                                    encoder=self.classifier_encoder,
-                                    symmetrize=False,              # set True if you want undirected EW averaging
-                                )
                                 
                         la = self._spur_loss(
                                 h_masked=hC_k,
@@ -353,8 +365,7 @@ class Experts(nn.Module):
                     if self._lambda_E > 0:
                         masked_x_k = x * node_mask_k
                         edge_weight_k = edge_mask_k.view(-1)
-                        with self._frozen_params(self.env_classifier_encoder, freeze_bn_running_stats=True):
-                            h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch)
+                        h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch)
 
                         ea = self._causal_loss(
                             h_masked=hC_k,
