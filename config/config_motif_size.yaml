@@ -31,20 +31,20 @@ model:
   type: "moe"  # Options: GIN, GCN, GraphSAGE, moe
   parallel: false
   hidden_dim: 300
+  global_pooling: "mean"
   num_layers: 3
   dropout: 0.5
-  pooling: "mean"  # Options: mean, sum, max
-  weight_str: 0.0
-  weight_la: 0.1
-  weight_ea: 0.1
+  weight_str: 1.0
+  weight_la: 5.0
+  weight_ea: 1.0
   weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 1.0
-  weight_load: 0.5
-  num_experts: 6
+  weight_div: 0.2
+  weight_load: 0.2
+  num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
-  adv_warmup_epochs: 10
-  adv_ramp_epochs: 10
+  adv_warmup_epochs: 4
+  adv_ramp_epochs: 5
   strinv_warmup_epochs: 5
   strinv_ramp_epochs: 5
 
