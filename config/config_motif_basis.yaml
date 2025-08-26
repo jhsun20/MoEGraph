@@ -35,8 +35,8 @@ model:
   num_layers: 3
   dropout: 0.5
   weight_str: 0.0
-  weight_la: 0.01
-  weight_ea: 0.05
+  weight_la: 0.1
+  weight_ea: 0.1
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 0.2
@@ -72,5 +72,5 @@ gate:
   activation: "entmax"
   entmax_alpha: 1.3
   depth: 3
-  hidden_dim: 300
+  hidden_dim: 64
   train_after: 10
