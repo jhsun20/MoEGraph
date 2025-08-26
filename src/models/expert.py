@@ -190,7 +190,7 @@ class Experts(nn.Module):
         Z = self.causal_encoder(x, edge_index, batch=batch)
         edge_feat = torch.cat([Z[edge_index[0]], Z[edge_index[1]]], dim=1)
 
-        node_masks, edge_masks, feat_masks = [], []
+        node_masks, edge_masks = [], []
         expert_logits, h_stable_list = [], []
 
         is_eval = not self.training
@@ -258,7 +258,6 @@ class Experts(nn.Module):
             'h_orig':   h_orig,
             'node_masks': node_masks,
             'edge_masks': edge_masks,
-            'feat_masks': feat_masks,
             'expert_logits': expert_logits,
             'rho': [self.rho_node, self.rho_edge, self.rho_feat],
         }
@@ -279,7 +278,7 @@ class Experts(nn.Module):
 
                 # Mask regularization (per-graph keep-rate prior)
                 reg = self._mask_reg(
-                    node_masks[:, k, :], edge_masks[:, k, :], feat_masks[:, k, :],
+                    node_masks[:, k, :], edge_masks[:, k, :],
                     node_batch=batch, edge_batch=batch[edge_index[0]], expert_idx=k
                 ) * self.weight_reg
                 reg_list.append(reg)
@@ -337,7 +336,7 @@ class Experts(nn.Module):
                 tot_list.append(total)
 
             # Diversity across experts' masks
-            div_loss = self.weight_div * self._diversity_loss(node_masks, edge_masks, feat_masks,
+            div_loss = self.weight_div * self._diversity_loss(node_masks, edge_masks,
                                             node_batch=batch, edge_batch=batch[edge_index[0]])
 
             out.update({
@@ -396,7 +395,6 @@ class Experts(nn.Module):
         self,
         node_masks: torch.Tensor,   # [N_nodes, K, 1] or [N_nodes, K]
         edge_masks: torch.Tensor,   # [N_edges, K, 1] or [N_edges, K]
-        feat_masks: torch.Tensor,   # [N_nodes, K, F] (per-feature) or [N_nodes, K, 1]
         node_batch: torch.Tensor,   # [N_nodes] graph indices (0..B-1)
         edge_batch: torch.Tensor,   # [N_edges] graph indices (0..B-1)
     ):
@@ -487,22 +485,15 @@ class Experts(nn.Module):
         # -------- prepare modality tensors to shape [items, K] --------
         N = _maybe_squeeze(node_masks)                   # [N_nodes, K]
         E = _maybe_squeeze(edge_masks)                   # [N_edges, K]
-        # feat: if per-feature masks exist, average across features to a single prob per node
-        if feat_masks.dim() == 3 and feat_masks.size(-1) > 1:
-            Fm = feat_masks.mean(dim=-1)                 # [N_nodes, K]
-        else:
-            Fm = _maybe_squeeze(feat_masks)              # [N_nodes, K]
 
         # -------- compute components per modality --------
         n_corr = _per_graph_abs_corr_hinge(N, node_batch)
         e_corr = _per_graph_abs_corr_hinge(E, edge_batch)
-        f_corr = _per_graph_abs_corr_hinge(Fm, node_batch)
-        corr   = torch.stack([n_corr, e_corr, f_corr]).mean()
+        corr   = torch.stack([n_corr, e_corr]).mean()
 
         n_uo = _union_overlap_terms(N, node_batch)
         e_uo = _union_overlap_terms(E, edge_batch)
-        f_uo = _union_overlap_terms(Fm, node_batch)
-        uo   = torch.stack([n_uo, e_uo, f_uo]).mean()
+        uo   = torch.stack([n_uo, e_uo]).mean()
 
         # final combined diversity loss
         # print(f"corr: {corr}, uo: {uo}")
@@ -511,7 +502,7 @@ class Experts(nn.Module):
         loss = w_corr * corr + w_uo * uo
         return loss
 
-    def _mask_reg(self, node_mask, edge_mask, feat_mask, node_batch, edge_batch, expert_idx: int,
+    def _mask_reg(self, node_mask, edge_mask, node_batch, edge_batch, expert_idx: int,
                   use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5)):
         if use_fixed_rho:
             rho_node, rho_edge, rho_feat = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
@@ -530,11 +521,9 @@ class Experts(nn.Module):
 
         node_keep_pg = per_graph_keep(node_mask, node_batch)
         edge_keep_pg = per_graph_keep(edge_mask, edge_batch)
-        feat_keep_pg = per_graph_keep(feat_mask.mean(dim=1, keepdim=True), node_batch)
 
         return ((node_keep_pg - rho_node) ** 2).mean() + \
-               ((edge_keep_pg - rho_edge) ** 2).mean() + \
-               ((feat_keep_pg - rho_feat) ** 2).mean()
+               ((edge_keep_pg - rho_edge) ** 2).mean()
 
     def _causal_loss(
         self,
