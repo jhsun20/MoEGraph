@@ -121,9 +121,10 @@ class Experts(nn.Module):
             nn.Linear(hidden_dim, self.num_classes) for _ in range(self.num_experts)
         ])
 
-        self.ea_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
-        )
+        self.ea_encoders = nn.ModuleList([
+            GINEncoderWithEdgeWeight(self.num_features, hidden_dim, num_layers, dropout, train_eps=True)
+            for _ in range(self.num_experts)
+        ])
 
         # Per-expert EA classifier (predicts environment id)
         self.num_envs = dataset_info['num_envs']
@@ -132,7 +133,10 @@ class Experts(nn.Module):
         ])
 
         # --- LECI-style tiny GINs for the LA (spur/complement) branch ---
-        self.la_encoder = GINEncoderWithEdgeWeight(self.num_features, hidden_dim, num_layers, dropout, train_eps=True)
+        self.la_encoders = nn.ModuleList([
+            GINEncoderWithEdgeWeight(self.num_features, hidden_dim, num_layers, dropout, train_eps=True)
+            for _ in range(self.num_experts)
+        ])
         self.la_classifiers = nn.ModuleList([
             nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_classes)) for _ in range(self.num_experts)
         ])
@@ -289,7 +293,7 @@ class Experts(nn.Module):
                         data=data,
                         node_mask=node_mask,           # (N,1) or (N,)
                         edge_mask=edge_mask.view(-1),  # (E,)
-                        encoder=self.la_encoder,
+                        encoder=self.la_encoders[k],
                         symmetrize=False,              # set True if you want undirected EW averaging
                     )
 
@@ -303,7 +307,7 @@ class Experts(nn.Module):
                     # Environment head: tiny GIN -> mean pool (for EA / environment inference)
                     masked_x = x * node_mask_k
                     edge_weight = edge_mask_k.view(-1)
-                    masked_Z_ea = self.ea_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+                    masked_Z_ea = self.ea_encoders[k](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
                     if self.global_pooling == 'mean':
                         h_ea = global_mean_pool(masked_Z_ea, batch)
                     elif self.global_pooling == 'sum':
