@@ -635,8 +635,8 @@ class Experts(nn.Module):
         if use_fixed_rho:
             rho_node, rho_edge = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
         else:
-            rho_node = torch.clamp(self.rho_node[expert_idx], 0.4, 0.6)
-            rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.4, 0.6)
+            rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.5)
+            rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.5)
 
         def per_graph_keep(mask_vals, batch_idx):
             G = batch_idx.max().item() + 1
