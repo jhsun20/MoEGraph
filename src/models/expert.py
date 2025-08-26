@@ -129,7 +129,7 @@ class Experts(nn.Module):
         # Classifier encoder (masked pass)
         self.classifier_encoders = nn.ModuleList([
             GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling)
+                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling)
         for _ in range(self.num_experts)
         ])
 
@@ -153,9 +153,11 @@ class Experts(nn.Module):
         ])
 
         self.num_envs = dataset_info['num_envs']
-        self.env_classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling
-        )
+        self.env_classifier_encoders = nn.ModuleList([
+            GINEncoderWithEdgeWeight(
+                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling)
+        for _ in range(self.num_experts)
+        ])
 
         self.expert_env_classifiers_causal = nn.ModuleList([
             nn.Sequential(
@@ -174,9 +176,11 @@ class Experts(nn.Module):
             for _ in range(self.num_experts)
         ])
 
-        self.spur_classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling
-        )
+        self.spur_classifier_encoders = nn.ModuleList([
+            GINEncoderWithEdgeWeight(
+                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling)
+        for _ in range(self.num_experts)
+        ])
 
         self.expert_classifiers_spur = nn.ModuleList([
             nn.Sequential(
@@ -351,24 +355,23 @@ class Experts(nn.Module):
                 reg_list.append(reg)
 
                 if not is_eval:
-                    # h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
-                    #             data=data,
-                    #             node_mask=node_mask_k,           # (N,1) or (N,)
-                    #             edge_mask=edge_mask_k.view(-1),  # (E,)
-                    #             encoder=self.env_classifier_encoder,
-                    #             symmetrize=False,              # set True if you want undirected EW averaging
-                    #         )
-                    # edge_weight_k = edge_mask_k.view(-1)
-                    # spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env, edge_index, edge_weight=edge_weight_spur_env, batch=batch)
-                    # ce_env = self._ce(spur_env_logits, env_labels)
-                    # ce_list[-1] += 0.01 * ce_env
+                    h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
+                                data=data,
+                                node_mask=node_mask_k,           # (N,1) or (N,)
+                                edge_mask=edge_mask_k.view(-1),  # (E,)
+                                encoder=self.env_classifier_encoders[k],
+                                symmetrize=False,              # set True if you want undirected EW averaging
+                            )
+                    spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env)
+                    ce_env = self._ce(spur_env_logits, env_labels)
+                    ce_list[-1] += 0.1 * ce_env
 
                     if self._lambda_L > 0:
                         h_spur, edge_weight_spur = self._encode_complement_subgraph(
                                 data=data,
                                 node_mask=node_mask_k,           # (N,1) or (N,)
                                 edge_mask=edge_mask_k.view(-1),  # (E,)
-                                encoder=self.spur_classifier_encoder,
+                                encoder=self.classifier_encoders[k],
                                 symmetrize=False,              # set True if you want undirected EW averaging
                             )
                                 
@@ -387,7 +390,7 @@ class Experts(nn.Module):
                     if self._lambda_E > 0:
                         masked_x_k = x * node_mask_k
                         edge_weight_k = edge_mask_k.view(-1)
-                        h_stable_env_k = self.env_classifier_encoder(masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch)
+                        h_stable_env_k = self.env_classifier_encoders[k](masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch)
 
                         ea = self._causal_loss(
                             h_masked=hC_k,
