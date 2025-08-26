@@ -364,7 +364,7 @@ class Experts(nn.Module):
                             )
                     spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env)
                     ce_env = self._ce(spur_env_logits, env_labels)
-                    ce_list[-1] += 0.1 * ce_env
+                    ce_list[-1] += ce_env
 
                     if self._lambda_L > 0:
                         h_spur, edge_weight_spur = self._encode_complement_subgraph(
@@ -760,6 +760,7 @@ class Experts(nn.Module):
             tau_logit=tau_logit,
             reduction="mean",
         )
+        print(f"ea loss: {nec['loss_nec']}")
         return nec["loss_nec"]
 
     
