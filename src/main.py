@@ -70,7 +70,6 @@ if __name__ == "__main__":
     parser.add_argument('--num_layers', type=int, help='Number of layers')
     parser.add_argument('--dropout', type=float, help='Dropout rate')
     parser.add_argument('--pooling', type=str, help='Pooling method (mean, sum, max)')
-    parser.add_argument('--weight_str', type=float, help='Weight for structural loss')
     parser.add_argument('--weight_sem', type=float, help='Weight for semantic loss')
     parser.add_argument('--weight_reg', type=float, help='Weight for regularization loss')
     parser.add_argument('--weight_ce', type=float, help='Weight for cross-entropy loss')
@@ -78,6 +77,11 @@ if __name__ == "__main__":
     parser.add_argument('--weight_load', type=float, help='Weight for load balancing loss')
     parser.add_argument('--num_experts', type=int, help='Number of experts for MoE models')
     parser.add_argument('--aggregation', type=str, help='Aggregation method (mean, majority_vote, weighted_mean)')
+    parser.add_argument('--weight_la', type=float, help='Weight for local accuracy loss')
+    parser.add_argument('--weight_ea', type=float, help='Weight for expert accuracy loss')
+    parser.add_argument('--weight_str', type=float, help='Weight for structural loss')
+    parser.add_argument('--adv_warmup_epochs', type=int, help='Number of epochs for warmup')
+    parser.add_argument('--adv_ramp_epochs', type=int, help='Number of epochs for ramp')
 
     # Training arguments
     parser.add_argument('--epochs', type=int, help='Number of training epochs')
@@ -170,6 +174,12 @@ if __name__ == "__main__":
         config['model']['num_experts'] = args.num_experts
     if args.aggregation:
         config['model']['aggregation'] = args.aggregation
+    if args.weight_la:
+        config['model']['weight_la'] = args.weight_la
+    if args.weight_ea:
+        config['model']['weight_ea'] = args.weight_ea
+    if args.weight_str:
+        config['model']['weight_str'] = args.weight_str
 
     if args.epochs:
         config['training']['epochs'] = args.epochs
