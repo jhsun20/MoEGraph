@@ -259,7 +259,7 @@ class Experts(nn.Module):
             'node_masks': node_masks,
             'edge_masks': edge_masks,
             'expert_logits': expert_logits,
-            'rho': [self.rho_node, self.rho_edge, self.rho_feat],
+            'rho': [self.rho_node, self.rho_edge],
         }
 
         if target is not None:
@@ -503,13 +503,12 @@ class Experts(nn.Module):
         return loss
 
     def _mask_reg(self, node_mask, edge_mask, node_batch, edge_batch, expert_idx: int,
-                  use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5, 0.5)):
+                  use_fixed_rho: bool = False, fixed_rho_vals: tuple = (0.5, 0.5)):
         if use_fixed_rho:
-            rho_node, rho_edge, rho_feat = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
+            rho_node, rho_edge = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
         else:
             rho_node = torch.clamp(self.rho_node[expert_idx], 0.4, 0.6)
             rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.4, 0.6)
-            rho_feat = torch.clamp(self.rho_feat[expert_idx], 0.4, 0.6)
 
         def per_graph_keep(mask_vals, batch_idx):
             G = batch_idx.max().item() + 1
@@ -522,8 +521,7 @@ class Experts(nn.Module):
         node_keep_pg = per_graph_keep(node_mask, node_batch)
         edge_keep_pg = per_graph_keep(edge_mask, edge_batch)
 
-        return ((node_keep_pg - rho_node) ** 2).mean() + \
-               ((edge_keep_pg - rho_edge) ** 2).mean()
+        return ((node_keep_pg - rho_node) ** 2).mean() + ((edge_keep_pg - rho_edge) ** 2).mean()
 
     def _causal_loss(
         self,
