@@ -355,17 +355,6 @@ class Experts(nn.Module):
                 reg_list.append(reg)
 
                 if not is_eval:
-                    h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
-                                data=data,
-                                node_mask=node_mask_k,           # (N,1) or (N,)
-                                edge_mask=edge_mask_k.view(-1),  # (E,)
-                                encoder=self.env_classifier_encoders[k],
-                                symmetrize=False,              # set True if you want undirected EW averaging
-                            )
-                    spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env)
-                    ce_env = self._ce(spur_env_logits, env_labels)
-                    str_loss = ce_env * self.weight_str
-
                     if self._lambda_L > 0:
                         h_spur, edge_weight_spur = self._encode_complement_subgraph(
                                 data=data,
@@ -389,6 +378,17 @@ class Experts(nn.Module):
                         la = hC_k.new_tensor(0.0)
 
                     if self._lambda_E > 0:
+                        h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
+                                    data=data,
+                                    node_mask=node_mask_k,           # (N,1) or (N,)
+                                    edge_mask=edge_mask_k.view(-1),  # (E,)
+                                    encoder=self.env_classifier_encoders[k],
+                                    symmetrize=False,              # set True if you want undirected EW averaging
+                                )
+                        spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env)
+                        ce_env = self._ce(spur_env_logits, env_labels)
+                        str_loss = ce_env * self.weight_str
+
                         masked_x_k = x * node_mask_k
                         edge_weight_k = edge_mask_k.view(-1)
                         h_stable_env_k = self.env_classifier_encoders[k](masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch)
