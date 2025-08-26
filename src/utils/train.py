@@ -96,7 +96,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     scaler = GradScaler()
 
     total_loss = total_ce_loss = total_reg_loss = 0
-    total_la_loss = total_ea_loss = total_str_loss = total_div_loss = total_load_loss = 0
+    total_la_loss = total_ea_loss = total_str_loss = total_div_loss = total_gate_loss = 0
     all_targets = []
     all_aggregated_outputs = []
 
@@ -147,7 +147,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         total_ea_loss += aggregated_outputs['loss_ea'].item() * batch_size    
         total_str_loss += aggregated_outputs['loss_str'].item() * batch_size
         total_div_loss += aggregated_outputs['loss_div'].item() * batch_size
-        total_load_loss += aggregated_outputs['loss_load'].item() * batch_size
+        total_gate_loss += aggregated_outputs['loss_gate'].item() * batch_size
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
 
@@ -220,7 +220,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     metrics['loss_ea'] = total_ea_loss / len(loader.dataset)
     metrics['loss_str'] = total_str_loss / len(loader.dataset)
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
-    metrics['loss_load'] = total_load_loss / len(loader.dataset)
+    metrics['loss_gate'] = total_gate_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
 
     # ------- NEW: compute & print epoch-level drop rates -------
@@ -259,7 +259,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
 def evaluate_moe(model, loader, device, metric_type, epoch, config):
     model.eval()
     total_loss = total_ce_loss = total_reg_loss = 0
-    total_la_loss = total_ea_loss = total_str_loss = total_div_loss = total_load_loss = 0
+    total_la_loss = total_ea_loss = total_str_loss = total_div_loss = total_gate_loss = 0
     all_targets = []
     all_aggregated_outputs = []
     all_mv_counts = []  # majority-vote "logits" = per-class vote counts (with tiny tie-breaker)
@@ -335,7 +335,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         total_ea_loss += aggregated_outputs['loss_ea'].item() * batch_size
         total_str_loss += aggregated_outputs['loss_str'].item() * batch_size
         total_div_loss += aggregated_outputs['loss_div'].item() * batch_size
-        total_load_loss += aggregated_outputs['loss_load'].item() * batch_size
+        total_gate_loss += aggregated_outputs['loss_gate'].item() * batch_size
         all_targets.append(data.y.detach())
         all_aggregated_outputs.append(aggregated_outputs['logits'].detach())
 
@@ -441,7 +441,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     metrics['loss_ea'] = total_ea_loss / len(loader.dataset)
     metrics['loss_str'] = total_str_loss / len(loader.dataset)
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
-    metrics['loss_load'] = total_load_loss / len(loader.dataset)
+    metrics['loss_gate'] = total_gate_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
 
     # ------- NEW: epoch-level drop rates -------
@@ -562,7 +562,7 @@ def train(config, trial=None):
             # Build optimizer with param groups
             optimizer = torch.optim.Adam([
                 {"params": experts_params, "lr": config['training']['lr'], "weight_decay": config['training']['weight_decay'], "name": "experts"},
-                {"params": gate_params,    "lr": config['training']['lr']*0.1, "weight_decay": config['training']['weight_decay'], "name": "gate"},
+                {"params": gate_params,    "lr": config['training']['lr'], "weight_decay": config['training']['weight_decay'], "name": "gate"},
             ])
 
 

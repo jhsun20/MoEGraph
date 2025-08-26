@@ -50,7 +50,11 @@ class MoE(nn.Module):
                                        nn.ReLU(),
                                        nn.Linear(gate_hidden, self.num_experts))
         self.entmax_alpha = float(config['gate']['entmax_alpha'])
-
+        gcfg = config.get('gate', {})
+        self.gate_tau_oracle = float(gcfg.get('tau_oracle', 0.75))     # softness for teacher
+        self.gate_temperature = float(gcfg.get('temperature', 1.0))    # scales gate_scores
+        self.weight_gate      = float(gcfg.get('weight_gate', 1.0))    # total gate loss weight
+        self.weight_gate_oracle = float(gcfg.get('weight_oracle', 1.0))# teacher KL weight
         self.current_epoch = 0
 
         if self.verbose:
@@ -64,45 +68,34 @@ class MoE(nn.Module):
 
     def forward(self, data):
         # Run experts
-        shared_out = self.shared(data, data.y)  # includes per-expert lists + diversity
+        shared_out = self.shared(data, data.y)  # (B,K,C) etc.
 
-        # Gate on RAW graph (no expert info)
-        gate_scores = self._gate_logits_raw(data)  # (B, K)
-        # NEW: compute per-sample expert uncertainty u \in [0,1]
-        # u = mean_k H(p_k) / log(C), where p_k are per-expert class probs
-        # expert_logits = shared_out['expert_logits']        # (B,K,C)
-        # B, K, C = expert_logits.shape
-        # with torch.no_grad():
-        #     per_expert_log_probs = expert_logits.log_softmax(dim=-1)        # (B,K,C)
-        #     per_expert_probs     = per_expert_log_probs.exp()
-        #     per_expert_entropy   = -(per_expert_probs * per_expert_log_probs).sum(dim=-1)   # (B,K)
-        #     u = per_expert_entropy.mean(dim=1) / (torch.log(torch.tensor(float(C), device=expert_logits.device)))  # (B,)
+        # Gate scores from RAW graph
+        gate_scores = self._gate_logits_raw(data)  # (B,K)
 
+        # --- NEW: train the gate (independent of routing choice) ---
+        gate_loss, p_gate_train = self._compute_gate_loss(shared_out, data.y, gate_scores)
 
+        # Routing policy
         if self.current_epoch < self.train_after:
-            # Freeze gate to uniform early on
+            # Warm-up: keep routing uniform, but gate still learns via gate_loss above
             gate_probs = torch.full_like(gate_scores, 1.0 / self.num_experts)
         else:
-            if self.entmax_alpha > 1:
-                gate_probs = entmax_bisect(gate_scores, alpha=self.entmax_alpha, dim=-1)
-            else:
-                gate_probs = F.softmax(gate_scores, dim=-1)
-            # # --- in MoE.forward, right after gate_probs is computed (and blended) ---
-            # if (self.current_epoch >= self.topk_after) and (self.topk_train_k and self.topk_train_k < self.num_experts):
-            #     # hard per-sample top-k mask
-            #     topk_vals, topk_idx = gate_probs.topk(self.topk_train_k, dim=1)       # (B, k)
-            #     mask = torch.zeros_like(gate_probs)                                    # (B, K)
-            #     mask.scatter_(1, topk_idx, 1.0)
-            #     gate_probs = gate_probs * mask
-            #     denom = gate_probs.sum(dim=1, keepdim=True).clamp_min(1e-8)
-            #     gate_probs = gate_probs / denom
+            # Post warm-up: route using the gate's own distribution
+            gate_probs = p_gate_train
 
         if self.verbose:
             with torch.no_grad():
                 print("[MoE] gate (first row):", gate_probs[0].tolist())
 
-        # Aggregate logits and losses
+        # Aggregate logits and losses (task + expert-reg losses)
         out = self._aggregate(shared_out, gate_probs, targets=data.y)
+
+        # --- NEW: add gate training loss to total (weighted) ---
+        out['loss_gate']  = self.weight_gate * gate_loss
+        out['loss_total'] = out['loss_total'] + out['loss_gate']
+        out['p_gate_train'] = p_gate_train  # handy for logging
+
         return out
 
     # ------------- Internals -------------
@@ -137,9 +130,8 @@ class MoE(nn.Module):
 
         # Diversity (already scalar); Load-balance on gate (optional)
         div = shared_out['loss_div']
-        load = self._load_balance(gate_probs) * self.weight_load
 
-        total = (ce + reg + la + ea + strl + div + load)
+        total = (ce + reg + la + ea + strl + div)
 
         return {
             'logits': agg_logits,
@@ -150,13 +142,49 @@ class MoE(nn.Module):
             'loss_ea': ea * self.weight_ea,
             'loss_str': strl,
             'loss_div': div,
-            'loss_load': load,
             'gate_weights': gate_probs,              # (B, K)
             'rho': shared_out['rho'],
             'expert_logits': expert_logits,         # (B, K, C)
             'node_masks': shared_out['node_masks'],
             'edge_masks': shared_out['edge_masks']
         }
+
+    def _compute_gate_loss(self, shared_out, targets, gate_scores, eps: float = 1e-12):
+        """
+        Train the gate to pick competent experts, even during warm-up:
+        - Teacher q from per-expert CE on expert logits (stop-grad).
+        - Student p from gate_scores (entmax/softmax on scores).
+        - Loss = KL(q || p) + weight_lb * load_balance(p).
+        Does NOT backprop through experts (teacher is detached).
+        """
+        expert_logits = shared_out['expert_logits']            # (B,K,C)
+        B, K, C = expert_logits.shape
+
+        # ----- Teacher: oracle from per-expert CE (stop-grad) -----
+        with torch.no_grad():
+            ce_per = F.cross_entropy(
+                expert_logits.reshape(B * K, C),
+                targets.repeat_interleave(K),
+                reduction='none'
+            ).reshape(B, K)  # (B,K)
+            q = F.softmax(-ce_per / self.gate_tau_oracle, dim=1)  # (B,K), teacher
+
+        # ----- Student: gate probabilities from gate_scores (independent of warm-up routing) -----
+        scores = gate_scores / max(self.gate_temperature, 1e-6)
+        if self.entmax_alpha > 1:
+            p = entmax_bisect(scores, alpha=self.entmax_alpha, dim=1)  # (B,K)
+        else:
+            p = F.softmax(scores, dim=1)
+
+        # ----- KL(q || p) -----
+        kl = F.kl_div((q.clamp_min(eps)).log(), p.clamp_min(eps), reduction='batchmean')
+
+        # ----- Load balance on the gate's own distribution p -----
+        lb = self._load_balance(p)
+
+        # Weighted sum; return scalar and p if the caller wants to log/inspect it
+        gate_loss = self.weight_gate_oracle * kl + self.weight_load * lb
+        return gate_loss, p
 
     @staticmethod
     def _gate_weighted_ce(stacked_logits, targets, gate_weights):
@@ -206,3 +234,5 @@ class MoE(nn.Module):
 
         # Final: reverse-KL balance + entropy penalty + (small) winner-spread
         return L_bal + lam * H_rows + 0.2 * L_top1
+    
+    
