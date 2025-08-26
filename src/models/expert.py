@@ -170,18 +170,6 @@ class Experts(nn.Module):
             r_ea = min((epoch - self.ea_warmup_epochs) / max(self.ea_ramp_epochs, 1), 1.0)
             self._lambda_E = float(r_ea * self.lambda_E_end)
 
-        # Structural invariance (live) weight ramp (after warmup)
-        if epoch < self.strinv_warmup_epochs:
-            self._weight_str_live = 0.0
-        else:
-            p = min((epoch - self.strinv_warmup_epochs) / max(self.strinv_ramp_epochs, 1), 1.0)
-            self._weight_str_live = float(self.weight_str_end * p)
-
-        if self.verbose and epoch % 10 == 0:
-            print(f"[Experts.set_epoch] epoch={epoch} | temp={self._mask_temp:.3f} "
-                  f"| lambda_L={self._lambda_L:.4f} | beta_ib={self._beta_ib:.6f} "
-                  f"| w_str_live={self._weight_str_live:.4f}")
-            
         # Optionally freeze BN at/after a chosen epoch (once).
         if (not self._bn_frozen) and (self.bn_freeze_epoch >= 0) and (epoch >= self.bn_freeze_epoch):
             self._freeze_bn(freeze_affine=self.bn_freeze_affine, verbose=self.verbose)
