@@ -278,7 +278,7 @@ class Experts(nn.Module):
             node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
             # Enforce symmetry for edges that have reverse edges
-            edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
+            # edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
             # if k == 0:  # or pick any expert index you want to monitor
             #     report = mask_symmetry_report(edge_index, edge_mask.view(-1))
             #     print(f"[Symmetry check, Expert {k}] {report}")
