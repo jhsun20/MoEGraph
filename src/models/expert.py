@@ -111,9 +111,10 @@ class Experts(nn.Module):
         ])
 
         # Classifier encoder (masked pass)
-        self.classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True
-        )
+        self.classifier_encoders = nn.ModuleList([
+            GINEncoderWithEdgeWeight(self.num_features, hidden_dim, num_layers, dropout, train_eps=True)
+            for _ in range(self.num_experts)
+        ])
 
         # Per-expert classifiers
         self.expert_classifiers = nn.ModuleList([
@@ -232,7 +233,7 @@ class Experts(nn.Module):
             edge_weight = edge_mask.view(-1)
 
             # LECI-style invariant head: tiny GIN -> mean pool
-            masked_Z_lc = self.classifier_encoder(masked_x, edge_index, batch=batch, edge_weight=edge_weight)
+            masked_Z_lc = self.classifier_encoders[k](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
             if self.global_pooling == 'mean':
                 h_stable = global_mean_pool(masked_Z_lc, batch)  # h_C
             elif self.global_pooling == 'sum':
