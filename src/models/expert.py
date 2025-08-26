@@ -364,7 +364,7 @@ class Experts(nn.Module):
                             )
                     spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env)
                     ce_env = self._ce(spur_env_logits, env_labels)
-                    ce_list[-1] += ce_env
+                    str_loss = ce_env * self.weight_str
 
                     if self._lambda_L > 0:
                         h_spur, edge_weight_spur = self._encode_complement_subgraph(
@@ -493,9 +493,6 @@ class Experts(nn.Module):
                             # logits_full=logits_full_main, w_rel_margin=0.3, rel_margin=1.0
                             )
                         la = nec_loss['loss_nec']
-
-                    else:
-                        str_loss = hC_k.new_tensor(0.0)
 
                 else:
                     la = hC_k.new_tensor(0.0)
