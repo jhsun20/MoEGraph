@@ -406,6 +406,7 @@ class Experts(nn.Module):
 
                     else:
                         ea = hC_k.new_tensor(0.0)
+                        str_loss = hC_k.new_tensor(0.0)
 
                     # if self._weight_str_live > 0:
                     if False:
