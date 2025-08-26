@@ -141,8 +141,8 @@ class MoE(nn.Module):
             'loss_total': total,
             'loss_ce': ce,
             'loss_reg': reg,
-            'loss_la': la * self.weight_la,
-            'loss_ea': ea * self.weight_ea,
+            'loss_la': la,
+            'loss_ea': ea,
             'loss_str': strl,
             'loss_div': div,
             'gate_weights': gate_probs,              # (B, K)

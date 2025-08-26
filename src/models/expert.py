@@ -75,14 +75,14 @@ class Experts(nn.Module):
 
         # ---------- Schedulers (mask temp, LA ramp, IB ramp, STR ramp) ----------
         # LA (label adversary) target
-        self.lambda_L_end = float(mcfg.get('lambda_L_end', mcfg.get('weight_la', 0.1)))
+        self.lambda_L_end = float(mcfg.get('lambda_L_end', 1))
         self.adv_warmup_epochs = int(mcfg.get('adv_warmup_epochs', 5))
         self.adv_ramp_epochs   = int(mcfg.get('adv_ramp_epochs', 5))
         self._lambda_L = 0.0  # live value
 
         # Environment inference + EA scheduling (mirrors your LA/IB ramps)
         self.env_inference = bool(mcfg.get('env_inference', True))
-        self.lambda_E_end = float(mcfg.get('lambda_E_end', mcfg.get('weight_ea', 0.1)))
+        self.lambda_E_end = float(mcfg.get('lambda_E_end', 1))
         self.ea_warmup_epochs = int(mcfg.get('ea_warmup_epochs', self.adv_warmup_epochs))
         self.ea_ramp_epochs   = int(mcfg.get('ea_ramp_epochs',   self.adv_ramp_epochs))
         self._lambda_E = 0.0  # live value updated in set_epoch
@@ -104,7 +104,7 @@ class Experts(nn.Module):
         # ---------- Encoders / Heads ----------
         # Causal/selector encoder to get node embeddings Z for masks
         self.causal_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling='none'
         )
 
         # Per-expert maskers
@@ -128,40 +128,60 @@ class Experts(nn.Module):
 
         # Classifier encoder (masked pass)
         self.classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling
         )
 
         # Per-expert classifiers
         self.expert_classifiers_causal = nn.ModuleList([
-            ExpertClassifier(hidden_dim, self.num_classes, dropout, self.global_pooling)
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim//2, self.num_classes)
+            )
             for _ in range(self.num_experts)
         ])
 
         self.expert_classifiers_spur = nn.ModuleList([
-            ExpertClassifier(hidden_dim, self.num_classes, dropout, self.global_pooling)
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim//2, self.num_classes)
+            )
             for _ in range(self.num_experts)
         ])
 
         self.num_envs = dataset_info['num_envs']
         self.env_classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling
         )
 
         self.expert_env_classifiers_causal = nn.ModuleList([
-            ExpertClassifier(hidden_dim, self.num_envs, dropout, self.global_pooling)
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim//2, self.num_envs)
+            )
             for _ in range(self.num_experts)
         ])
         self.expert_env_classifiers_spur = nn.ModuleList([
-            ExpertClassifier(hidden_dim, self.num_envs, dropout, self.global_pooling)
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim//2, self.num_envs)
+            )
             for _ in range(self.num_experts)
         ])
 
         self.spur_classifier_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers - 1, dropout, train_eps=True, global_pooling='none'
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling
         )
 
         self.expert_classifiers_spur = nn.ModuleList([
-            ExpertClassifier(hidden_dim, self.num_envs, dropout, self.global_pooling)
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim//2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim//2, self.num_classes)
+            )
             for _ in range(self.num_experts)
         ])
 
@@ -284,7 +304,7 @@ class Experts(nn.Module):
             h_stable = self.classifier_encoder(masked_x, edge_index, edge_weight=edge_weight, batch=batch)
 
             # Classify with your existing per-expert classifier
-            logit = self.expert_classifiers_causal[k](h_stable, edge_index, edge_weight=edge_weight, batch=batch)
+            logit = self.expert_classifiers_causal[k](h_stable)
 
             h_stable_list.append(h_stable)
             expert_logits.append(logit)
@@ -358,7 +378,7 @@ class Experts(nn.Module):
                                 edge_index=edge_index,
                                 edge_weight=edge_weight_spur,
                                 batch=batch
-                            )
+                            ) * self.weight_la
                     else:
                         la = hC_k.new_tensor(0.0)
 
@@ -375,7 +395,7 @@ class Experts(nn.Module):
                             edge_index=edge_index,
                             edge_weight=edge_weight_k,
                             batch=batch
-                        )
+                        ) * self.weight_ea
 
                     else:
                         ea = hC_k.new_tensor(0.0)
@@ -701,7 +721,7 @@ class Experts(nn.Module):
                             f"(got min={int(env_tgt.min())}, max={int(env_tgt.max())})")
         # 3) adversarial logits (GRL applies the reversed grad only to features)
         h_ea_adv = grad_reverse(h_ea, self._lambda_E)          # scale via λ_E here
-        logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv, edge_index, edge_weight=edge_weight, batch=batch)   # (B, num_envs)
+        logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv)   # (B, num_envs)
         if logits_E.size(1) != self.num_envs:
             raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
         # 4) standard CE (do NOT multiply by λ_E again—GRL already scales feature grads)
@@ -741,7 +761,7 @@ class Experts(nn.Module):
             raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
         la = h_masked.new_tensor(0.0)
         # ----- Classification head (existing path) -----
-        logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv, edge_index, edge_weight=edge_weight, batch=batch)     # (B, num_classes)
+        logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv)     # (B, num_classes)
         la = F.cross_entropy(logits_y_spur, labels)
         return la
     
