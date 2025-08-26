@@ -760,7 +760,7 @@ class Experts(nn.Module):
             tau_logit=tau_logit,
             reduction="mean",
         )
-        print(f"ea loss: {nec['loss_nec']}")
+        #print(f"ea loss: {nec['loss_nec']}")
         return nec["loss_nec"]
 
     
