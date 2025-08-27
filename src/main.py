@@ -180,6 +180,10 @@ if __name__ == "__main__":
         config['model']['weight_ea'] = args.weight_ea
     if args.weight_str:
         config['model']['weight_str'] = args.weight_str
+    if args.adv_warmup_epochs:
+        config['model']['adv_warmup_epochs'] = args.adv_warmup_epochs
+    if args.adv_ramp_epochs:
+        config['model']['adv_ramp_epochs'] = args.adv_ramp_epochs
 
     if args.epochs:
         config['training']['epochs'] = args.epochs
