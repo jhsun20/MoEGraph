@@ -33,7 +33,7 @@ model:
   num_layers: 3
   dropout: 0.5
   pooling: "sum"  # Options: mean, sum, max
-  weight_str: 0.1
+  weight_str: 0.05
   weight_la: 1.0
   weight_ea: 1.0
   weight_reg: 1.0
@@ -42,8 +42,8 @@ model:
   weight_load: 0.5
   num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
-  adv_warmup_epochs: 5
-  adv_ramp_epochs: 5
+  adv_warmup_epochs: 1
+  adv_ramp_epochs: 0
   strinv_warmup_epochs: 1
   strinv_ramp_epochs: 1
 
