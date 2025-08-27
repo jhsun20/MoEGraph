@@ -534,11 +534,11 @@ class Experts(nn.Module):
         if self.training:
             u = torch.rand_like(logits)
             g = -torch.log(-torch.log(u + 1e-20) + 1e-20)
-            y_soft = torch.sigmoid((logits + g) / 0.5)
+            y_soft = torch.sigmoid((logits + g) / 0.1)
         else:
             u = torch.rand_like(logits)
             g = -torch.log(-torch.log(u + 1e-20) + 1e-20)
-            y_soft = torch.sigmoid((logits + g) / 0.5)
+            y_soft = torch.sigmoid((logits + g) / 0.1)
 
         y_hard = (y_soft > 0.5).float()
         return y_hard + (y_soft - y_soft.detach())
@@ -576,7 +576,7 @@ class Experts(nn.Module):
         # ---- local hyperparameters (no config dependency) ----
         # weights of each component
         w_corr = 1.0
-        w_uo   = 0.0     # multiplies (coverage + overlap) per modality before averaging
+        w_uo   = 1.0     # multiplies (coverage + overlap) per modality before averaging
 
         # correlation hinge threshold (lower => stricter decorrelation)
         tau_corr = 0.10
