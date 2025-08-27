@@ -651,7 +651,7 @@ def train(config, trial=None):
             # print(f"current_metric: {current_metric}")
             current_eval_metric = val_metrics[eval_metric]
             # For error metrics like RMSE and MAE, lower is better
-            is_better = (current_metric < best_val_metric - config['training']['early_stopping']['min_delta']) if metric_type in ['RMSE', 'MAE'] else (current_metric > best_val_metric + config['training']['early_stopping']['min_delta'])
+            is_better = (current_metric < best_val_metric - config['training']['early_stopping']['min_delta']) if metric_type in ['RMSE', 'MAE', 'loss'] else (current_metric > best_val_metric + config['training']['early_stopping']['min_delta'])
             
             if is_better:
                 best_val_metric = current_metric
