@@ -570,7 +570,7 @@ def train(config, trial=None):
         # Training loop
         if not is_tuning:
             logger.logger.info("Starting training...")
-        best_val_acc = 0
+        best_val_metric = 0
         patience_counter = 0
         best_epoch = 0  # Track the best epoch
         
@@ -641,21 +641,25 @@ def train(config, trial=None):
 
             # Early stopping based on OOD validation performance
             # Use the appropriate metric for early stopping
-            primary_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
+            eval_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
+            primary_metric = 'loss'
+            # print(f"val_metrics: {val_metrics}")
             if primary_metric not in val_metrics:
                 primary_metric = list(val_metrics.keys())[0]  # Fallback to first metric
                 
             current_metric = val_metrics[primary_metric]
+            # print(f"current_metric: {current_metric}")
+            current_eval_metric = val_metrics[eval_metric]
             # For error metrics like RMSE and MAE, lower is better
-            is_better = (current_metric < best_val_acc - config['training']['early_stopping']['min_delta']) if metric_type in ['RMSE', 'MAE'] else (current_metric > best_val_acc + config['training']['early_stopping']['min_delta'])
+            is_better = (current_metric < best_val_metric - config['training']['early_stopping']['min_delta']) if metric_type in ['RMSE', 'MAE'] else (current_metric > best_val_metric + config['training']['early_stopping']['min_delta'])
             
             if is_better:
-                best_val_acc = current_metric
+                best_val_metric = current_metric
                 patience_counter = 0
                 best_epoch = epoch  # Update best epoch
                 logger.save_model(model, epoch, val_metrics)
                 if not is_tuning:
-                    logger.logger.info(f"New best model saved with {primary_metric}: {best_val_acc:.4f}")
+                    logger.logger.info(f"New best model saved with {primary_metric}: {best_val_metric:.4f} and primary metric {eval_metric}: {current_eval_metric:.4f}")
             # else:
             #     patience_counter += 1
             #     if patience_counter >= config['training']['early_stopping']['patience']:
