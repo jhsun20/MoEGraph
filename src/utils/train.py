@@ -570,7 +570,8 @@ def train(config, trial=None):
         # Training loop
         if not is_tuning:
             logger.logger.info("Starting training...")
-        primary_metric = 'loss'
+        # primary_metric = 'loss'
+        primary_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
         if primary_metric == 'loss':
             best_val_metric = 1000000
         else:
