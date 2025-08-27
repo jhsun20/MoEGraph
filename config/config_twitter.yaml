@@ -42,7 +42,7 @@ model:
   weight_load: 0.5
   num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
-  adv_warmup_epochs: 1
+  adv_warmup_epochs: 4
   adv_ramp_epochs: 5
   strinv_warmup_epochs: 1
   strinv_ramp_epochs: 1
