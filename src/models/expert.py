@@ -297,7 +297,7 @@ class Experts(nn.Module):
 
             # Any node with at least one kept edge must be on
             n_force = (inc > 0).float().view(-1, 1)    # (N,1)
-            node_mask = torch.maximum(node_mask, n_force)
+            # node_mask = torch.maximum(node_mask, n_force)
 
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
