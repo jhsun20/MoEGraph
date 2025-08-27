@@ -298,19 +298,27 @@ class Experts(nn.Module):
             # n_force = (inc > 0).float().view(-1, 1)    # (N,1)
             # node_mask = torch.maximum(node_mask, n_force)
 
-            # Induce edges purely from node mask (ignore edge_mask entirely)
+            # Keep edges as weighted by edge_mask (0 removes, 1 keeps; soft works too)
             src, dst = edge_index  # (2, E)
-            node_on = node_mask.view(-1)                       # (N,)
-            allowed_edges = (node_on[src] * node_on[dst])      # (E,) in {0,1} given hard-concrete
+            e_on = edge_mask.view(-1)                           # (E,)
 
-            # Stash masks (edge mask is derived from nodes; no learned edge mask)
-            node_masks.append(node_mask)
-            edge_masks.append(allowed_edges.view(-1, 1))       # keep interface consistent if you log it
+            # Turn on all endpoints of any kept edge
+            N = x.size(0)
+            node_weight = x.new_zeros(N)                        # (N,), float
+            node_weight.index_add_(0, src, e_on)               # add incident kept edges
+            node_weight.index_add_(0, dst, e_on)
+            node_weight = (node_weight > 0).float()            # binarize: node on iff incident to a kept edge
 
-            # Apply node-induced subgraph
-            masked_x    = x * node_mask                        # zero out inactive nodes
-            edge_weight = allowed_edges.view(-1)               # zero out edges that touch any inactive node
-            node_weight = node_on                              # (N,)
+            # (Optional) if you want soft node weights derived from edge weights, skip >0 and keep raw sums.
+            # node_weight = node_weight.clamp(max=1.0)
+
+            # Keep the interface consistent with your logs
+            node_masks.append(node_weight.view(-1, 1))          # derived from edges
+            edge_masks.append(edge_mask)                        # learned
+
+            # Apply masks to features/graph
+            masked_x   = x * node_weight.view(-1, 1)           # zero-out nodes with no kept incident edges
+            edge_weight = e_on                                  # (E,)
 
             h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch, node_weight=node_weight)
 
