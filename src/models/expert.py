@@ -298,25 +298,19 @@ class Experts(nn.Module):
             # n_force = (inc > 0).float().view(-1, 1)    # (N,1)
             # node_mask = torch.maximum(node_mask, n_force)
 
-            # After obtaining node_mask, edge_mask via hard-concrete (both ~{0,1})
+            # Induce edges purely from node mask (ignore edge_mask entirely)
             src, dst = edge_index  # (2, E)
-            # Ensure an edge is active only if BOTH its endpoints are active
-            node_on = (node_mask.view(-1) > 0.5).float()          # (N,)
-            allowed = (node_on[src] * node_on[dst]).view(-1, 1)   # (E,1)
+            node_on = node_mask.view(-1)                       # (N,)
+            allowed_edges = (node_on[src] * node_on[dst])      # (E,) in {0,1} given hard-concrete
 
-            # Zero out edges that touch any inactive node
-            edge_mask = edge_mask * allowed
-
-
-
+            # Stash masks (edge mask is derived from nodes; no learned edge mask)
             node_masks.append(node_mask)
-            edge_masks.append(edge_mask)
+            edge_masks.append(allowed_edges.view(-1, 1))       # keep interface consistent if you log it
 
-            # Apply masks
-            masked_x = x * node_mask
-            edge_weight = edge_mask.view(-1)
-            node_weight = node_mask.view(-1)
-
+            # Apply node-induced subgraph
+            masked_x    = x * node_mask                        # zero out inactive nodes
+            edge_weight = allowed_edges.view(-1)               # zero out edges that touch any inactive node
+            node_weight = node_on                              # (N,)
 
             h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch, node_weight=node_weight)
 
