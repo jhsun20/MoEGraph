@@ -570,7 +570,11 @@ def train(config, trial=None):
         # Training loop
         if not is_tuning:
             logger.logger.info("Starting training...")
-        best_val_metric = 0
+        primary_metric = 'loss'
+        if primary_metric == 'loss':
+            best_val_metric = 1000000
+        else:
+            best_val_metric = 0
         patience_counter = 0
         best_epoch = 0  # Track the best epoch
         
@@ -642,7 +646,7 @@ def train(config, trial=None):
             # Early stopping based on OOD validation performance
             # Use the appropriate metric for early stopping
             eval_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
-            primary_metric = 'loss'
+            
             # print(f"val_metrics: {val_metrics}")
             if primary_metric not in val_metrics:
                 primary_metric = list(val_metrics.keys())[0]  # Fallback to first metric
