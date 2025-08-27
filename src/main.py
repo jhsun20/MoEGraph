@@ -70,6 +70,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_layers', type=int, help='Number of layers')
     parser.add_argument('--dropout', type=float, help='Dropout rate')
     parser.add_argument('--pooling', type=str, help='Pooling method (mean, sum, max)')
+    parser.add_argument('--global_pooling', type=str, help='Global pooling method (mean, sum, max)')
     parser.add_argument('--weight_sem', type=float, help='Weight for semantic loss')
     parser.add_argument('--weight_reg', type=float, help='Weight for regularization loss')
     parser.add_argument('--weight_ce', type=float, help='Weight for cross-entropy loss')
@@ -158,6 +159,8 @@ if __name__ == "__main__":
         config['model']['dropout'] = args.dropout
     if args.pooling:
         config['model']['pooling'] = args.pooling
+    if args.global_pooling:
+        config['model']['global_pooling'] = args.global_pooling
     if args.weight_str:
         config['model']['weight_str'] = args.weight_str
     if args.weight_sem:
