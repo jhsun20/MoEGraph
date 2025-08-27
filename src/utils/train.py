@@ -748,11 +748,11 @@ def train(config, trial=None):
         logger.close()
         elapsed_time = time.time() - start_time
         print(f"Trial completed in {elapsed_time:.2f} seconds.")
-        return best_val_acc
+        return best_val_metric
 
     # Calculate average accuracies for test OOD and test ID metrics
-    avg_test_ood_primary_metric = sum(metrics[primary_metric] for metrics in all_test_ood_metrics) / len(all_test_ood_metrics)
-    avg_test_id_primary_metric = sum(metrics[primary_metric] for metrics in all_test_id_metrics) / len(all_test_id_metrics)
+    avg_test_ood_primary_metric = sum(metrics[eval_metric] for metrics in all_test_ood_metrics) / len(config['experiment']['seeds'])
+    avg_test_id_primary_metric = sum(metrics[eval_metric] for metrics in all_test_id_metrics) / len(config['experiment']['seeds'])
     results_path = os.path.join(results_dir, "metrics.yaml")
     with open(results_path, 'w') as f:
         yaml.dump({
