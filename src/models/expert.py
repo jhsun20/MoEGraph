@@ -204,8 +204,8 @@ class Experts(nn.Module):
 
 
         # Keep-rate priors (trainable) per expert for regularization
-        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.1, 0.3))
-        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.1, 0.3))
+        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.5))
+        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.5))
 
         # print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
 
@@ -286,18 +286,28 @@ class Experts(nn.Module):
             # --- AFTER you create node_mask, edge_mask, feat_mask for expert k
             # and BEFORE "Apply masks" ---
             # Force endpoints on whenever an incident edge is on (hard post-processing).
+            # src, dst = edge_index  # (2, E)
+            # e_on = (edge_mask.view(-1) > 0.5).float()  # ensure hard 0/1 (already hard-concrete, this is just explicit)
+
+            # # Accumulate incident "on" edges per node
+            # N = x.size(0)
+            # inc = node_mask.new_zeros(N)               # float tensor
+            # inc.index_add_(0, src, e_on)
+            # inc.index_add_(0, dst, e_on)
+            # # Any node with at least one kept edge must be on
+            # n_force = (inc > 0).float().view(-1, 1)    # (N,1)
+            # node_mask = torch.maximum(node_mask, n_force)
+
+            # After obtaining node_mask, edge_mask via hard-concrete (both ~{0,1})
             src, dst = edge_index  # (2, E)
-            e_on = (edge_mask.view(-1) > 0.5).float()  # ensure hard 0/1 (already hard-concrete, this is just explicit)
+            # Ensure an edge is active only if BOTH its endpoints are active
+            node_on = (node_mask.view(-1) > 0.5).float()          # (N,)
+            allowed = (node_on[src] * node_on[dst]).view(-1, 1)   # (E,1)
 
-            # Accumulate incident "on" edges per node
-            N = x.size(0)
-            inc = node_mask.new_zeros(N)               # float tensor
-            inc.index_add_(0, src, e_on)
-            inc.index_add_(0, dst, e_on)
+            # Zero out edges that touch any inactive node
+            edge_mask = edge_mask * allowed
 
-            # Any node with at least one kept edge must be on
-            n_force = (inc > 0).float().view(-1, 1)    # (N,1)
-            node_mask = torch.maximum(node_mask, n_force)
+
 
             node_masks.append(node_mask)
             edge_masks.append(edge_mask)
