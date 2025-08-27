@@ -221,16 +221,9 @@ class GINEncoderWithEdgeWeight(nn.Module):
             x = act(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         if self.global_pooling == 'mean':
-            if node_weight is None:
-                x = global_mean_pool(x, batch)
-            else:
-                # x = masked_global_mean_pool(x, batch, node_weight)
-                x = global_mean_pool(x, batch)
+            x = global_mean_pool(x, batch)
         elif self.global_pooling == 'sum':
-            if node_weight is None:
-                x = global_add_pool(x, batch)
-            else:
-                x = global_add_pool(x, batch)
+            x = global_add_pool(x, batch)
         elif self.global_pooling == 'none':
             pass
         else:
