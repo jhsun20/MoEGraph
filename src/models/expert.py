@@ -400,7 +400,7 @@ class Experts(nn.Module):
                             edge_index=edge_index,
                             edge_weight=edge_weight_spur,
                             batch=batch,
-                            cf_mode="entropy",              # keep your mode
+                            cf_mode="kl_uniform",              # keep your mode
                             reduction="none",             # <-- per-sample
                         ) * self._lambda_L                                  # (B,)
                         la = la_vec.mean()                                  # (B,) 
@@ -445,7 +445,7 @@ class Experts(nn.Module):
                             edge_index=edge_index,
                             edge_weight=edge_weight_k,
                             batch=batch,
-                            cf_mode="entropy",
+                            cf_mode="kl_uniform",
                             reduction="none",                     # <-- per-sample
                         ) * self._lambda_E                        # (B,)
                         ea = ea_vec.mean()      # scalar for logs
