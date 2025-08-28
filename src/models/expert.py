@@ -204,8 +204,8 @@ class Experts(nn.Module):
 
 
         # Keep-rate priors (trainable) per expert for regularization
-        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.5))
-        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.2, 0.5))
+        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.7))
+        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.7))
 
         # print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
 
@@ -384,14 +384,13 @@ class Experts(nn.Module):
 
                 if not is_eval:
                     if self._lambda_L > 0:
-                        with self._frozen_params(self.classifier_encoders[k]):
-                            h_spur, edge_weight_spur = self._encode_complement_subgraph(
-                                    data=data,
-                                    node_mask=node_mask_k,           # (N,1) or (N,)
-                                    edge_mask=edge_mask_k.view(-1),  # (E,)
-                                    encoder=self.classifier_encoders[k],
-                                    symmetrize=False
-                            )
+                        h_spur, edge_weight_spur = self._encode_complement_subgraph(
+                                data=data,
+                                node_mask=node_mask_k,           # (N,1) or (N,)
+                                edge_mask=edge_mask_k.view(-1),  # (E,)
+                                encoder=self.classifier_encoders[k],
+                                symmetrize=False
+                        )
                                 
                         la_vec = self._spur_loss(
                             h_masked=hC_k,
@@ -657,7 +656,7 @@ class Experts(nn.Module):
             rho_node, rho_edge = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
         else:
             # rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.5)
-            rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.5)
+            rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.8)
 
         def per_graph_keep(mask_vals, batch_idx):
             G = batch_idx.max().item() + 1
