@@ -76,9 +76,9 @@ def freeze_all_but_gate(model):
     if hasattr(moem, "shared"):
         moem.shared.eval()
     if hasattr(moem, "gate_enc"):
-        moem.gate_enc.train()
+        moem.gate_enc.eval()
     if hasattr(moem, "gate_mlp"):
-        moem.gate_mlp.train()
+        moem.gate_mlp.eval()
     if hasattr(moem, "_gate_mlp") and moem._gate_mlp is not None:
         moem._gate_mlp.train()
 

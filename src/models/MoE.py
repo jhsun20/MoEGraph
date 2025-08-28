@@ -45,10 +45,10 @@ class MoE(nn.Module):
         gate_hidden    = config['gate']['hidden_dim']
         gate_depth     = config['gate']['depth']
         dropout        = config['model']['dropout']
-        # self.gate_enc  = GINEncoderWithEdgeWeight(self.num_features, gate_hidden, gate_depth, dropout, train_eps=True, global_pooling='mean')
-        # self.gate_mlp  = nn.Sequential(nn.Linear(gate_hidden, gate_hidden),
-        #                                nn.ReLU(),
-        #                                nn.Linear(gate_hidden, self.num_experts))
+        self.gate_enc  = GINEncoderWithEdgeWeight(self.num_features, gate_hidden, gate_depth, dropout, train_eps=True, global_pooling='mean')
+        self.gate_mlp  = nn.Sequential(nn.Linear(gate_hidden, gate_hidden),
+                                       nn.ReLU(),
+                                       nn.Linear(gate_hidden, self.num_experts))
         self.entmax_alpha = float(config['gate']['entmax_alpha'])
         gcfg = config.get('gate', {})
         self.gate_tau_oracle = float(gcfg.get('tau_oracle', 0.75))     # softness for teacher
