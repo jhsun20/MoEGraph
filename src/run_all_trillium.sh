@@ -2,8 +2,6 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-  "config/config_hiv_size.yaml"
-  "config/config_cmnist.yaml"
   "config/config_sst2.yaml"
   "config/config_twitter.yaml"
 )
