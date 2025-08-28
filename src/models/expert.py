@@ -276,7 +276,7 @@ class Experts(nn.Module):
             node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
 
-            use_edges = False
+            use_edges = True
             if use_edges:
                 # Keep edges as weighted by edge_mask (0 removes, 1 keeps; soft works too)
                 src, dst = edge_index                    # (2, E) — must be Long
