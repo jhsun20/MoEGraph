@@ -350,15 +350,24 @@ class Experts(nn.Module):
         if target is not None:
             ce_list, reg_list, str_list, tot_list, la_list, ea_list = [], [], [], [], [], []
 
+            # NEW: per-sample (B,K) collectors
+            B = expert_logits.size(0)
+            K = self.num_experts
+            ce_ps  = []   # each (B,)
+            la_ps  = []
+            ea_ps  = []
+            str_ps = []
+
             for k in range(self.num_experts):
                 logits_k = expert_logits[:, k, :]
                 hC_k     = h_stable_list[:, k, :]
                 node_mask_k = node_masks[:, k, :]
                 edge_mask_k = edge_masks[:, k, :]
 
-                # Classification CE (class-weighted)
-                # print(f"self.num_classes: {self.num_classes}, self.metric: {self.metric}")
-                ce = self._ce(logits_k, target) * self.weight_ce
+                # ----- CE (per-sample + scalar) -----
+                ce_vec = F.cross_entropy(logits_k, target.view(-1).long(), reduction='none') * self.weight_ce  # (B,)
+                ce = ce_vec.mean()
+                ce_ps.append(ce_vec)
                 ce_list.append(ce)
 
                 # Mask regularization (per-graph keep-rate prior)
@@ -367,6 +376,11 @@ class Experts(nn.Module):
                     node_batch=batch, edge_batch=batch[edge_index[0]], expert_idx=k
                 ) * self.weight_reg
                 reg_list.append(reg)
+
+                # Defaults for per-sample terms when the path is off
+                la_vec = hC_k.new_zeros(B)   # (B,)
+                ea_vec = hC_k.new_zeros(B)   # (B,)
+                str_vec= hC_k.new_zeros(B)   # (B,)
 
                 if not is_eval:
                     if self._lambda_L > 0:
@@ -378,37 +392,48 @@ class Experts(nn.Module):
                                 symmetrize=False
                         )
                                 
-                        la = self._spur_loss(
-                                h_masked=hC_k,
-                                labels=target,
-                                h_spur=h_spur,
-                                expert_idx=k,
-                                edge_index=edge_index,
-                                edge_weight=edge_weight_spur,
-                                batch=batch,
-                                cf_mode="entropy"
-                            ) * self._lambda_L
-                    else:
-                        la = hC_k.new_tensor(0.0)
+                        la_vec = self._spur_loss(
+                            h_masked=hC_k,
+                            labels=target,
+                            h_spur=h_spur,
+                            expert_idx=k,
+                            edge_index=edge_index,
+                            edge_weight=edge_weight_spur,
+                            batch=batch,
+                            cf_mode="revce",              # keep your mode
+                            reduction="none",             # <-- per-sample
+                        ) * self._lambda_L                                  # (B,)
+                        la = la_vec.mean()                                  # (B,) 
 
+                    # ----- EA / STR (env) with per-sample signals -----
                     if self._lambda_E > 0:
+                        # 1) STR (spur env) — per-sample CE on env classifier fed the complement (spur) graph
                         h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
-                                    data=data,
-                                    node_mask=node_mask_k,           # (N,1) or (N,)
-                                    edge_mask=edge_mask_k.view(-1),  # (E,)
-                                    encoder=self.env_classifier_encoders[k],
-                                    symmetrize=False             # set True if you want undirected EW averaging
-                                )
-                        spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env)
-                        ce_env = self._ce(spur_env_logits, env_labels)
-                        str_loss = ce_env * self.weight_str
+                            data=data,
+                            node_mask=node_mask_k,            # (N,1) or (N,)
+                            edge_mask=edge_mask_k.view(-1),   # (E,)
+                            encoder=self.env_classifier_encoders[k],
+                            symmetrize=False
+                        )
+                        spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env)  # (B, |E|)
 
-                        masked_x_k = x * node_mask_k
+                        # Per-sample STR vector
+                        str_vec = F.cross_entropy(
+                            spur_env_logits, env_labels.view(-1).long(), reduction="none"
+                        ) * self.weight_str                     # (B,)
+                        # Scalar for your existing loss accounting
+                        str_loss = str_vec.mean()
+
+                        # 2) EA (stable env) — per-sample via _causal_loss(..., reduction="none")
+                        masked_x_k    = x * node_mask_k
                         node_weight_k = node_mask_k.view(-1)
                         edge_weight_k = edge_mask_k.view(-1)
-                        h_stable_env_k = self.env_classifier_encoders[k](masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch)
 
-                        ea = self._causal_loss(
+                        h_stable_env_k = self.env_classifier_encoders[k](
+                            masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch, node_weight=node_weight_k
+                        )                                         # (B, H_e)
+
+                        ea_vec = self._causal_loss(
                             h_masked=hC_k,
                             h_ea=h_stable_env_k,
                             expert_idx=k,
@@ -416,112 +441,45 @@ class Experts(nn.Module):
                             edge_index=edge_index,
                             edge_weight=edge_weight_k,
                             batch=batch,
-                            cf_mode="entropy"
-                        ) * self._lambda_E
+                            cf_mode="entropy",
+                            reduction="none",                     # <-- per-sample
+                        ) * self._lambda_E                        # (B,)
+                        ea = ea_vec.mean()      # scalar for logs
 
                     else:
-                        ea = hC_k.new_tensor(0.0)
+                        # off-path defaults
+                        ea       = hC_k.new_tensor(0.0)
                         str_loss = hC_k.new_tensor(0.0)
-
-                    # if self._weight_str_live > 0:
-                    if False:
-                        # Encode complement (spur) with the per‑expert LC encoder,
-                        # but freeze that encoder for the necessity pass.
-                        #with self._frozen_params(self.lc_encoders[0], freeze_bn_running_stats=True):
-                        h_drop_main = self._encode_complement_subgraph(
-                            data=data,
-                            node_mask=node_mask,                 # masks computed for expert k above
-                            edge_mask=edge_mask.view(-1),
-                            encoder=self.lc_encoders[0],         # <-- stays the same
-                            symmetrize=False,
-                        )
-
-                        # Pass through the per‑expert classifier head, also frozen for necessity.
-                        # with self._frozen_params(self.expert_classifiers[k], freeze_bn_running_stats=True):
-                        logits_drop_main = self.expert_classifiers[k](h_drop_main)
-
-                        nec_loss = self._cf_label_necessity_losses(
-                            logits_drop=logits_drop_main,
-                            target=target,
-                            num_classes=self.num_classes,           # 1 for single-logit binary; else C
-                            # early training:
-                            w_entropy=1.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0,
-                            # later add:
-                            # w_true_hinge_prob=0.3, tau_prob=0.3
-                            # or relative margin if you pass logits_full:
-                            # logits_full=logits_full_main, w_rel_margin=0.3, rel_margin=1.0
-                            )
-                        str_loss = nec_loss['loss_nec']
-
-                        # EA ENCODER SHOULD BE GOOD AT PREDICTING ENVIRONMENT FROM SPURIOUS GRAPH
-                        # with self._frozen_params(self.ea_encoders[0], freeze_bn_running_stats=True):
-                        #     h_spur2 = self._encode_complement_subgraph(
-                        #         data=data,
-                        #         node_mask=node_mask,           # (N,1) or (N,)
-                        #         edge_mask=edge_mask.view(-1),  # (E,)
-                        #         feat_mask=feat_mask,           # (N,F) or (F,)
-                        #         encoder=self.ea_encoders[0],
-                        #         symmetrize=False,              # set True if you want undirected EW averaging
-                        #     )
-
-                        # with self._frozen_params(self.ea_classifiers[0], freeze_bn_running_stats=True):
-                        #     logits_drop_env = self.ea_classifiers[0](h_spur2)
-
-                        # spur_ce = 0.1 * self._ce(logits_drop_env, env_labels)
-                        # #print(f"str_loss: {str_loss}, spur_ce: {spur_ce}")
-                        # str_loss = str_loss + spur_ce
-
-                        # Accumulate incident "on" edges per node
-                        N = x.size(0)
-                        inc = node_mask_k.new_zeros(N)               # float tensor
-                        inc.index_add_(0, src, e_on)
-                        inc.index_add_(0, dst, e_on)
-
-                        # Any node with at least one kept edge must be on
-                        n_force = (inc > 0).float().view(-1, 1)    # (N,1)
-                        node_mask_k = torch.maximum(node_mask_k, n_force)
-
-                        # Apply masks
-                        # masked_x = x * node_mask * feat_mask  # (N, D)
-                        masked_x = x * node_mask_k
-                        edge_weight = edge_mask_k.view(-1)
-
-                        #with self._frozen_params(self.ea_encoders[0], freeze_bn_running_stats=True):
-                        h_stable_env_k = self.ea_encoders[0](masked_x, edge_index, batch=batch, edge_weight=edge_weight)
-                        
-                        if self.global_pooling == 'mean':
-                            h_stable_env_k = global_mean_pool(h_stable_env_k, batch)
-                        elif self.global_pooling == 'sum':
-                            h_stable_env_k = global_add_pool(h_stable_env_k, batch)
-
-                        #with self._frozen_params(self.ea_classifiers[k], freeze_bn_running_stats=True):
-                        logits_stable_env = self.ea_classifiers[k](h_stable_env_k)
-
-                        nec_loss = self._cf_label_necessity_losses(
-                            logits_drop=logits_stable_env,
-                            target=env_labels,
-                            num_classes=self.num_envs,           # 1 for single-logit binary; else C
-                            # early training:
-                            w_entropy=0.1, w_kl_uniform=0.0, w_true_hinge_prob=0.0,
-                            # later add:
-                            # w_true_hinge_prob=0.3, tau_prob=0.3
-                            # or relative margin if you pass logits_full:
-                            # logits_full=logits_full_main, w_rel_margin=0.3, rel_margin=1.0
-                            )
-                        la = nec_loss['loss_nec']
+                        B        = hC_k.size(0)
+                        ea_vec   = hC_k.new_zeros(B)              # (B,)
+                        str_vec  = hC_k.new_zeros(B)              # (B,)
 
                 else:
                     la = hC_k.new_tensor(0.0)
                     ea = hC_k.new_tensor(0.0)
                     str_loss = hC_k.new_tensor(0.0)
 
+
+                # Append scalars (existing logs)
                 la_list.append(la)
                 ea_list.append(ea)
                 str_list.append(str_loss)
 
+                # Append per-sample vectors to collectors
+                la_ps.append(la_vec)
+                ea_ps.append(ea_vec)
+                str_ps.append(str_vec)
+
                 # Use live scheduled weight for structure (even though str_loss==0.0)
                 total = (ce + reg + str_loss + la + ea)
                 tot_list.append(total)
+
+
+            # Stack per-sample into (B,K)
+            ce_ps  = torch.stack(ce_ps,  dim=1)   # (B,K)
+            la_ps  = torch.stack(la_ps,  dim=1)   # (B,K)
+            ea_ps  = torch.stack(ea_ps,  dim=1)   # (B,K)
+            str_ps = torch.stack(str_ps, dim=1)   # (B,K)
 
             # Diversity across experts' masks
             div_loss = self.weight_div * self._diversity_loss(node_masks, edge_masks,
@@ -529,12 +487,19 @@ class Experts(nn.Module):
 
             out.update({
                 'loss_total_list': torch.stack(tot_list),   # (K,)
-                'loss_ce_list':    torch.stack(ce_list),
-                'loss_reg_list':   torch.stack(reg_list),
-                'loss_la_list':   torch.stack(la_list),
-                'loss_ea_list':   torch.stack(ea_list),
-                'loss_str_list':   torch.stack(str_list),
+                'loss_ce_list':    torch.stack(ce_list),    # (K,)
+                'loss_reg_list':   torch.stack(reg_list),   # (K,)
+                'loss_la_list':    torch.stack(la_list),    # (K,)
+                'loss_ea_list':    torch.stack(ea_list),    # (K,)
+                'loss_str_list':   torch.stack(str_list),   # (K,)
                 'loss_div':        div_loss,
+                # NEW: per-sample (B,K) matrices
+                'per_sample': {
+                    'ce':  ce_ps,
+                    'la':  la_ps,
+                    'ea':  ea_ps,
+                    'str': str_ps,
+                }
             })
 
         return out
@@ -704,18 +669,19 @@ class Experts(nn.Module):
 
     def _causal_loss(
         self,
-        h_masked: torch.Tensor,         # h_C (B, H)  -- (usually not used directly here)
-        h_ea:   Optional[torch.Tensor] = None,    # (B, Hea)   -- features given to env head from G_C
+        h_masked: torch.Tensor,
+        h_ea:   Optional[torch.Tensor] = None,
         expert_idx: Optional[int] = None,
         env_labels: Optional[torch.Tensor] = None,
         edge_index: Optional[torch.Tensor] = None,
         edge_weight: Optional[torch.Tensor] = None,
         batch: Optional[torch.Tensor] = None,
         *,
-        cf_mode: str = "revce",                 # same options as spur_loss
+        cf_mode: str = "revce",
         cf_weights: Optional[dict] = None,
         tau_prob: float = 0.3,
         tau_logit: float = 0.0,
+        reduction: str = "mean",                # <-- NEW
     ) -> torch.Tensor:
         """
         Causal->env CF objective. Default is adversarial CE (reverse-CE behavior via GRL).
@@ -725,19 +691,15 @@ class Experts(nn.Module):
             raise ValueError("h_ea (env features from G_C) must be provided")
 
         if cf_mode == "revce":
-            # ---------- ORIGINAL ADVERSARIAL EA (GRL + CE) ----------
             env_tgt = env_labels.view(-1).long().to(h_ea.device)
-            if int(env_tgt.max()) >= self.num_envs or int(env_tgt.min()) < 0:
-                raise ValueError(f"env_labels must be in [0, {self.num_envs-1}]")
             h_ea_adv = grad_reverse(h_ea, self._lambda_E)
-            logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv)
-            if logits_E.size(1) != self.num_envs:
-                raise RuntimeError(f"EA head out={logits_E.size(1)} != num_envs={self.num_envs}")
-            return F.cross_entropy(logits_E, env_tgt)
+            logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv)  # (B, |E|)
+            if reduction == "none":
+                return F.cross_entropy(logits_E, env_tgt, reduction="none")      # (B,)
+            return F.cross_entropy(logits_E, env_tgt)                             # scalar
 
-        # ---------- ENTROPY/KL/HINGE PATH (shared env head, frozen, NO GRL) ----------
         with self._frozen_params(self.expert_env_classifiers_spur[expert_idx], freeze_bn_running_stats=True):
-            logits_env_cf = self.expert_env_classifiers_spur[expert_idx](h_ea)  # (B, num_envs)
+            logits_env_cf = self.expert_env_classifiers_spur[expert_idx](h_ea)    # (B, |E|)
 
         # map cf_mode -> weights
         w = dict(w_entropy=0.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0, w_true_hinge_logit=0.0, w_one_minus_true=0.0)
@@ -771,26 +733,26 @@ class Experts(nn.Module):
             **w,
             tau_prob=tau_prob,
             tau_logit=tau_logit,
-            reduction="mean",
+            reduction=reduction,                 # <-- propagate
         )
-        #print(f"ea loss: {nec['loss_nec']}")
         return nec["loss_nec"]
 
-    
+
     def _spur_loss(
         self,
-        h_masked: torch.Tensor,         # h_C (B, H)
-        labels: torch.Tensor,           # (B,)
-        h_spur: Optional[torch.Tensor] = None,    # (B, H_spur)
+        h_masked: torch.Tensor,
+        labels: torch.Tensor,
+        h_spur: Optional[torch.Tensor] = None,
         expert_idx: Optional[int] = None,
         edge_index: Optional[torch.Tensor] = None,
         edge_weight: Optional[torch.Tensor] = None,
         batch: Optional[torch.Tensor] = None,
         *,
-        cf_mode: str = "revce",                 # "revce" | "entropy" | "kl_uniform" | "hinge_prob" | "hinge_logit" | "one_minus_true" | "mix"
-        cf_weights: Optional[dict] = None,      # only used if cf_mode == "mix"; keys are the w_* in _cf_label_necessity_losses
+        cf_mode: str = "revce",
+        cf_weights: Optional[dict] = None,
         tau_prob: float = 0.3,
         tau_logit: float = 0.0,
+        reduction: str = "mean",               # <-- NEW
     ) -> torch.Tensor:
         """
         Spurious->label CF objective. Default is reverse-CE (as before).
@@ -802,19 +764,15 @@ class Experts(nn.Module):
 
         # normalize label shape/type
         y = labels.view(-1).long()
-
         if cf_mode == "revce":
-            # ---------- ORIGINAL PATH (reverse CE via GRL on spurious features, separate CF head) ----------
             h_spur_adv = grad_reverse(h_spur, self._lambda_L)
-            logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv)     # (B, C)
-            la = F.cross_entropy(logits_y_spur, y)
-            return la
+            logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv)  # (B,C)
+            if reduction == "none":
+                return F.cross_entropy(logits_y_spur, y, reduction="none")        # (B,)
+            return F.cross_entropy(logits_y_spur, y)                               # scalar
 
-        # ---------- ENTROPY/KL/HINGE PATH (shared label head, frozen) ----------
-        # Use the SAME decision boundary as the normal label prediction.
-        # Freeze the head so gradients flow into encoder/masks, not the classifier.
         with self._frozen_params(self.expert_classifiers_causal[expert_idx], freeze_bn_running_stats=True):
-            logits_cf = self.expert_classifiers_causal[expert_idx](h_spur)  # (B, C) or (B,1)
+            logits_cf = self.expert_classifiers_causal[expert_idx](h_spur)         # (B,C) or (B,1)
 
         # map cf_mode -> weights for _cf_label_necessity_losses
         w = dict(w_entropy=0.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0, w_true_hinge_logit=0.0, w_one_minus_true=0.0)
@@ -846,7 +804,7 @@ class Experts(nn.Module):
             **w,
             tau_prob=tau_prob,
             tau_logit=tau_logit,
-            reduction="mean",
+            reduction=reduction,                 # <-- propagate
         )
         return nec["loss_nec"]
 
@@ -867,22 +825,22 @@ class Experts(nn.Module):
                 if sel.any():
                     C[k] = X[sel].mean(dim=0)
         return a
-    
+
     def _cf_label_necessity_losses(
         self,
-        logits_drop: torch.Tensor,   # main head on G_dropC, shape (B,C) or (B,1)
-        target: torch.Tensor,        # (B,) or (B,1), int labels for CE-style refs
+        logits_drop: torch.Tensor,   # (B,C) or (B,1)
+        target: torch.Tensor,        # (B,) or (B,1)
         num_classes: int,
         # toggles/weights (all >= 0)
-        w_entropy: float = 0.0,          # NON-NEGATIVE: uses entropy deficit = logC - H(p_drop)
-        w_kl_uniform: float = 0.0,       # NON-NEGATIVE: KL(p_drop || uniform)
-        w_true_hinge_prob: float = 0.0,  # NON-NEGATIVE: hinge on true-class probability
-        w_true_hinge_logit: float = 0.0, # NON-NEGATIVE: hinge on true-class logit
-        w_one_minus_true: float = 0.0,   # NON-NEGATIVE: -log(1 - p_y_drop)
+        w_entropy: float = 0.0,
+        w_kl_uniform: float = 0.0,
+        w_true_hinge_prob: float = 0.0,
+        w_true_hinge_logit: float = 0.0,
+        w_one_minus_true: float = 0.0,
         # thresholds / margins
-        tau_prob: float = 0.3,           # target max prob for true class (0.2–0.4 good)
-        tau_logit: float = 0.0,          # ~logit(0.5)=0
-        reduction: str = "mean",
+        tau_prob: float = 0.3,
+        tau_logit: float = 0.0,
+        reduction: str = "mean",     # <-- accept "mean" | "sum" | "none"
         eps: float = 1e-8,
     ):
         """
@@ -914,37 +872,36 @@ class Experts(nn.Module):
             logits_drop_mc = logits_drop
             C_eff = p_drop.size(1)
             tgt_for_mc = tgt_long
-
         # --- components (ALL NON-NEGATIVE) ---
-        # (1) Entropy deficit: logC - H(p_drop)  >= 0
-        ent = -(p_drop * p_drop.log()).sum(dim=-1)                    # H >= 0
+        ent = -(p_drop * p_drop.log()).sum(dim=-1)      # (B,)
         logC = math.log(C_eff)
-        loss_entropy = (logC - ent).clamp_min(0.0)
-        loss_entropy = loss_entropy.mean() if reduction == "mean" else loss_entropy.sum()
+        loss_entropy = (logC - ent).clamp_min(0.0)      # (B,)
 
-        # (2) KL(p_drop || uniform) >= 0
-        uni = torch.full_like(p_drop, 1.0 / C_eff)
-        loss_kl_uniform = (p_drop * (p_drop / uni).log()).sum(dim=-1)
-        loss_kl_uniform = loss_kl_uniform.mean() if reduction == "mean" else loss_kl_uniform.sum()
+        u = p_drop.new_full((B, C_eff), 1.0 / C_eff)
+        loss_kl_uniform = (p_drop * (p_drop.log() - u.log())).sum(dim=-1)  # (B,)
 
-        # helper to extract true-class values
         idx = torch.arange(B, device=logits_drop_mc.device)
+        py_drop = p_drop[idx, tgt_for_mc]               # (B,)
+        loss_true_hinge_prob  = torch.relu(py_drop - tau_prob)             # (B,)
 
-        # (3) Hinge on true-class probability: max(0, p_y_drop - tau_prob) >= 0
-        py_drop = p_drop[idx, tgt_for_mc]
-        loss_true_hinge_prob = torch.relu(py_drop - tau_prob)
-        loss_true_hinge_prob = loss_true_hinge_prob.mean() if reduction == "mean" else loss_true_hinge_prob.sum()
+        ly_drop = logits_drop_mc[idx, tgt_for_mc]       # (B,)
+        loss_true_hinge_logit = torch.relu(ly_drop - tau_logit)            # (B,)
 
-        # (4) Hinge on true-class logit: max(0, logit_y_drop - tau_logit) >= 0
-        ly_drop = logits_drop_mc[idx, tgt_for_mc]
-        loss_true_hinge_logit = torch.relu(ly_drop - tau_logit)
-        loss_true_hinge_logit = loss_true_hinge_logit.mean() if reduction == "mean" else loss_true_hinge_logit.sum()
+        loss_one_minus_true = -(1 - py_drop).clamp_min(eps).log()          # (B,)
 
-        # (5) One-minus-true: -log(1 - p_y_drop) >= 0
-        loss_one_minus_true = -(1 - py_drop).clamp_min(eps).log()
-        loss_one_minus_true = loss_one_minus_true.mean() if reduction == "mean" else loss_one_minus_true.sum()
+        # ---- apply reduction at the very end ----
+        def _reduce(v):
+            if reduction == "mean": return v.mean()
+            if reduction == "sum":  return v.sum()
+            if reduction == "none": return v
+            raise ValueError(f"reduction must be 'mean'|'sum'|'none', got {reduction}")
 
-        # weighted sum (lower is better; all components >= 0)
+        loss_entropy        = _reduce(loss_entropy)
+        loss_kl_uniform     = _reduce(loss_kl_uniform)
+        loss_true_hinge_prob= _reduce(loss_true_hinge_prob)
+        loss_true_hinge_logit=_reduce(loss_true_hinge_logit)
+        loss_one_minus_true = _reduce(loss_one_minus_true)
+
         loss_nec = (
             w_entropy         * loss_entropy +
             w_kl_uniform      * loss_kl_uniform +
@@ -955,13 +912,14 @@ class Experts(nn.Module):
 
         return {
             'loss_nec': loss_nec,
-            'nec_entropy': loss_entropy,                     # entropy deficit (>= 0)
-            'nec_kl_uniform': loss_kl_uniform,              # (>= 0)
-            'nec_true_hinge_prob': loss_true_hinge_prob,    # (>= 0)
-            'nec_true_hinge_logit': loss_true_hinge_logit,  # (>= 0)
-            'nec_one_minus_true': loss_one_minus_true,      # (>= 0)
+            'nec_entropy': loss_entropy,
+            'nec_kl_uniform': loss_kl_uniform,
+            'nec_true_hinge_prob': loss_true_hinge_prob,
+            'nec_true_hinge_logit': loss_true_hinge_logit,
+            'nec_one_minus_true': loss_one_minus_true,
             'binary_single_logit': binary_single_logit,
         }
+
     
     def _encode_complement_subgraph(
         self,

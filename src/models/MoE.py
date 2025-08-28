@@ -124,12 +124,28 @@ class MoE(nn.Module):
         # CE aggregated per expert, per sample
         ce = self._gate_weighted_ce(expert_logits.transpose(0, 1), targets, gate_probs.transpose(0, 1))
 
-        # Other per-expert losses (scalars) — combine via avg gate weights over batch
-        avg_gate = gate_probs.mean(dim=0).detach()  # (K,)
-        reg = (avg_gate * shared_out['loss_reg_list']).sum()
-        la = (avg_gate * shared_out['loss_la_list']).sum()
-        ea = (avg_gate * shared_out['loss_ea_list']).sum()
-        strl = (avg_gate * shared_out['loss_str_list']).sum()
+        # ---- NEW: gate-weight per-sample LA/EA/STR if provided ----
+        ps = shared_out.get('per_sample', None)  # dict of (B,K): 'ce','la','ea','str'
+        if ps is not None:
+            # gate-weighted mean over (B,K) -> scalar
+            def gate_weighted_mean(mat_bk):             # mat_bk: (B,K)
+                return (gate_probs * mat_bk).sum(dim=1).mean()
+
+            # note: your per-sample vectors are already scaled by the respective weights (λ_E, weight_str, etc.)
+            la  = gate_weighted_mean(ps['la'])
+            ea  = gate_weighted_mean(ps['ea'])
+            strl= gate_weighted_mean(ps['str'])
+
+            # Regularization remains expert-scalar × avg gate (batch)
+            avg_gate = gate_probs.mean(dim=0).detach()  # (K,)
+            reg = (avg_gate * shared_out['loss_reg_list']).sum()
+        else:
+            # Fallback: old behavior (batch-mean gate weighting of expert scalars)
+            avg_gate = gate_probs.mean(dim=0).detach()  # (K,)
+            reg = (avg_gate * shared_out['loss_reg_list']).sum()
+            la  = (avg_gate * shared_out['loss_la_list']).sum()
+            ea  = (avg_gate * shared_out['loss_ea_list']).sum()
+            strl= (avg_gate * shared_out['loss_str_list']).sum()
 
         # Diversity (already scalar); Load-balance on gate (optional)
         div = shared_out['loss_div']
@@ -175,21 +191,26 @@ class MoE(nn.Module):
             # Start from -CE
             r = -ce_per
 
-            # Add EA/LA signals. You currently return per-expert (batch-mean) scalars:
-            # shared_out['loss_ea_list'], shared_out['loss_la_list']  (K,)
-            # We can broadcast them; later you can switch to per-sample versions (see upgrade).
-            if 'loss_ea_list' in shared_out and self.gate_teacher_w_ea != 0.0:
-                ea_k = shared_out['loss_ea_list'].detach()        # (K,)
-                r = r + self.gate_teacher_w_ea * ea_k.view(1, K).expand_as(r)
+            # --- NEW: use per-sample LA/EA/STR if available ---
+            ps = shared_out.get('per_sample', None)
+            if ps is not None:
+                # Lower LA/EA/STR should increase reward, so subtract them
+                if self.gate_teacher_w_ea != 0.0 and 'ea' in ps:
+                    r = r + self.gate_teacher_w_ea * (-ps['ea'].detach())
+                if self.gate_teacher_w_la != 0.0 and 'la' in ps:
+                    r = r + self.gate_teacher_w_la * (-ps['la'].detach())
+                # (Optional) include STR as well if you want the gate to avoid spurious experts:
+                # r = r + w_str_oracle * (-ps['str'].detach())
+            else:
+                # Fallback: batch-mean scalars (previous behavior)
+                if 'loss_ea_list' in shared_out and self.gate_teacher_w_ea != 0.0:
+                    ea_k = shared_out['loss_ea_list'].detach()        # (K,)
+                    r = r + self.gate_teacher_w_ea * ea_k.view(1, K).expand_as(r)
+                if 'loss_la_list' in shared_out and self.gate_teacher_w_la != 0.0:
+                    la_k = shared_out['loss_la_list'].detach()        # (K,)
+                    r = r + self.gate_teacher_w_la * la_k.view(1, K).expand_as(r)
 
-            if 'loss_la_list' in shared_out and self.gate_teacher_w_la != 0.0:
-                la_k = shared_out['loss_la_list'].detach()        # (K,)
-                r = r + self.gate_teacher_w_la * la_k.view(1, K).expand_as(r)
-
-            # Optional (recommended): z-score each component along K to stabilize scales
-            # r = zscore(-ce_per) + wE*zscore(ea) + wL*zscore(la)
-
-            q = F.softmax(r / self.gate_tau_oracle, dim=1)        # (B,K), teacher
+            q = F.softmax(r / self.gate_tau_oracle, dim=1)        # (B,K)
 
         # ----- Student: gate probabilities from gate_scores (independent of warm-up routing) -----
         scores = gate_scores / max(self.gate_temperature, 1e-6)
