@@ -170,6 +170,8 @@ class GINConvWithEdgeWeight(MessagePassing):
 
     def forward(self, x, edge_index, edge_weight=None):
         # Add self-loops to the adjacency matrix
+        pre = check_double_self_loops(edge_index, edge_weight, num_nodes=x.size(0))
+
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
         if edge_weight is None:
             edge_weight = torch.ones((edge_index.size(1),), dtype=x.dtype, device=x.device)
@@ -178,6 +180,8 @@ class GINConvWithEdgeWeight(MessagePassing):
                 edge_weight,
                 torch.ones(x.size(0), dtype=x.dtype, device=x.device)  # self-loop weight = 1
             ], dim=0)
+
+        post = check_double_self_loops(edge_index, edge_weight, num_nodes=x.size(0))
 
         return self.nn((1 + self.eps) * x + self.propagate(edge_index, x=x, edge_weight=edge_weight))
 
@@ -251,9 +255,52 @@ class ExpertClassifier(nn.Module):
         return out
     
 
-def masked_global_mean_pool(x, batch, node_weight):
-    # Assumes x has already been masked upstream (e.g., x = x * node_mask)
-    w = node_weight.view(-1, 1).to(x.dtype)              # (N,1)
-    numer = global_add_pool(x, batch)                    # sum of (already-masked) node features
-    denom = global_add_pool(w, batch).clamp_min(1e-8)    # sum of kept-node weights
-    return numer / denom
+
+def check_double_self_loops(edge_index,
+                            edge_weight,
+                            num_nodes,
+                            raise_on_duplicates = True):
+    """
+    Returns a dict summary and (optionally) raises if any node has >1 self-loop.
+    edge_index: (2, E)
+    edge_weight: (E,) or None
+    num_nodes: optional but recommended (for complete bincount)
+    """
+    assert edge_index.dim() == 2 and edge_index.size(0) == 2, "edge_index must be (2, E)"
+    E = edge_index.size(1)
+
+    if edge_weight is not None:
+        assert edge_weight.dim() == 1 and edge_weight.numel() == E, \
+            f"edge_weight must be shape (E,), got {edge_weight.shape} vs E={E}"
+
+    # self-loop mask
+    self_mask = edge_index[0].eq(edge_index[1])  # (E,)
+    self_nodes = edge_index[0, self_mask]        # nodes with self-loops (with multiplicity)
+    n_self_edges = int(self_mask.sum())
+
+    if num_nodes is None:
+        num_nodes = int(edge_index.max().item()) + 1 if E > 0 else 0
+
+    # count how many self-loops each node has
+    per_node_counts = torch.bincount(self_nodes, minlength=num_nodes) if n_self_edges > 0 \
+                      else torch.zeros(num_nodes, dtype=torch.long, device=edge_index.device)
+
+    dup_nodes = (per_node_counts > 1).nonzero(as_tuple=False).view(-1)
+    has_duplicates = dup_nodes.numel() > 0
+    max_self_loops_on_a_node = int(per_node_counts.max().item()) if n_self_edges > 0 else 0
+
+    summary = {
+        "num_edges": E,
+        "num_nodes": num_nodes,
+        "num_self_loop_edges": n_self_edges,
+        "num_nodes_with_self_loop": int((per_node_counts > 0).sum().item()),
+        "max_self_loops_on_a_node": max_self_loops_on_a_node,
+        "has_duplicate_self_loops": bool(has_duplicates),
+        "duplicate_nodes": dup_nodes.detach().cpu().tolist(),  # nodes with >1 self-loop
+    }
+
+    if has_duplicates and raise_on_duplicates:
+        raise ValueError(f"Duplicate self-loops detected on nodes {summary['duplicate_nodes']}. "
+                         f"Max per node = {summary['max_self_loops_on_a_node']}.")
+
+    return summary

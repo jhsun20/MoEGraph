@@ -299,28 +299,28 @@ class Experts(nn.Module):
             # node_mask = torch.maximum(node_mask, n_force)
 
             # Keep edges as weighted by edge_mask (0 removes, 1 keeps; soft works too)
-            src, dst = edge_index  # (2, E)
-            e_on = edge_mask.view(-1)                           # (E,)
+            src, dst = edge_index                    # (2, E) — must be Long
+            e_on = edge_mask.view(-1).to(            # (E,)
+                dtype=torch.float32, device=x.device
+            )
 
-            # Turn on all endpoints of any kept edge
             N = x.size(0)
-            node_weight = x.new_zeros(N)                        # (N,), float
-            node_weight.index_add_(0, src, e_on)               # add incident kept edges
+            node_weight = e_on.new_zeros(N)          # (N,) float — matches e_on
+            node_weight.index_add_(0, src, e_on)
             node_weight.index_add_(0, dst, e_on)
-            node_weight = (node_weight > 0).float()            # binarize: node on iff incident to a kept edge
 
-            # (Optional) if you want soft node weights derived from edge weights, skip >0 and keep raw sums.
-            # node_weight = node_weight.clamp(max=1.0)
+            # choose hard or soft
+            node_weight = (node_weight > 0).float()  # or: node_weight = node_weight.clamp(max=1.0)
 
-            # Keep the interface consistent with your logs
-            node_masks.append(node_weight.view(-1, 1))          # derived from edges
-            edge_masks.append(edge_mask)                        # learned
+            # logs use what you actually applied
+            node_masks.append(node_weight.view(-1, 1))
+            edge_masks.append(e_on.view(-1, 1))                    
 
             # Apply masks to features/graph
             masked_x   = x * node_weight.view(-1, 1)           # zero-out nodes with no kept incident edges
             edge_weight = e_on                                  # (E,)
 
-            h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch, node_weight=node_weight)
+            h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch)
 
             # Classify with your existing per-expert classifier
             logit = self.expert_classifiers_causal[k](h_stable)
@@ -355,6 +355,7 @@ class Experts(nn.Module):
                 hC_k     = h_stable_list[:, k, :]
                 node_mask_k = node_masks[:, k, :]
                 edge_mask_k = edge_masks[:, k, :]
+
                 # Classification CE (class-weighted)
                 # print(f"self.num_classes: {self.num_classes}, self.metric: {self.metric}")
                 ce = self._ce(logits_k, target) * self.weight_ce
@@ -374,8 +375,8 @@ class Experts(nn.Module):
                                 node_mask=node_mask_k,           # (N,1) or (N,)
                                 edge_mask=edge_mask_k.view(-1),  # (E,)
                                 encoder=self.classifier_encoders[k],
-                                symmetrize=False,              # set True if you want undirected EW averaging
-                            )
+                                symmetrize=False
+                        )
                                 
                         la = self._spur_loss(
                                 h_masked=hC_k,
@@ -396,7 +397,7 @@ class Experts(nn.Module):
                                     node_mask=node_mask_k,           # (N,1) or (N,)
                                     edge_mask=edge_mask_k.view(-1),  # (E,)
                                     encoder=self.env_classifier_encoders[k],
-                                    symmetrize=False,              # set True if you want undirected EW averaging
+                                    symmetrize=False             # set True if you want undirected EW averaging
                                 )
                         spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env)
                         ce_env = self._ce(spur_env_logits, env_labels)
@@ -405,7 +406,7 @@ class Experts(nn.Module):
                         masked_x_k = x * node_mask_k
                         node_weight_k = node_mask_k.view(-1)
                         edge_weight_k = edge_mask_k.view(-1)
-                        h_stable_env_k = self.env_classifier_encoders[k](masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch, node_weight=node_weight_k)
+                        h_stable_env_k = self.env_classifier_encoders[k](masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch)
 
                         ea = self._causal_loss(
                             h_masked=hC_k,
