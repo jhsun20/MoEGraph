@@ -647,7 +647,7 @@ class Experts(nn.Module):
         if use_fixed_rho:
             rho_node, rho_edge = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
         else:
-            # rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.5)
+            rho_node = torch.clamp(self.rho_node[expert_idx], 0.2, 0.5)
             rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.8)
 
         def per_graph_keep(mask_vals, batch_idx):
@@ -658,11 +658,11 @@ class Experts(nn.Module):
             cnt.scatter_add_(0, batch_idx, torch.ones_like(mask_vals.squeeze()))
             return keep / (cnt + 1e-8)
 
-        # node_keep_pg = per_graph_keep(node_mask, node_batch)
+        node_keep_pg = per_graph_keep(node_mask, node_batch)
         edge_keep_pg = per_graph_keep(edge_mask, edge_batch)
 
-        #return ((node_keep_pg - rho_node) ** 2).mean() + ((edge_keep_pg - rho_edge) ** 2).mean()
-        return ((edge_keep_pg - rho_edge) ** 2).mean()
+        return ((node_keep_pg - rho_node) ** 2).mean() + ((edge_keep_pg - rho_edge) ** 2).mean()
+        #return ((edge_keep_pg - rho_edge) ** 2).mean()
 
     def _causal_loss(
         self,
