@@ -400,7 +400,7 @@ class Experts(nn.Module):
                             edge_index=edge_index,
                             edge_weight=edge_weight_spur,
                             batch=batch,
-                            cf_mode="revce",              # keep your mode
+                            cf_mode="entropy",              # keep your mode
                             reduction="none",             # <-- per-sample
                         ) * self._lambda_L                                  # (B,)
                         la = la_vec.mean()                                  # (B,) 
