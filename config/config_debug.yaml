@@ -7,7 +7,7 @@ experiment:
   debug:
     enable: true
     num_samples: 64
-    epochs: 10
+    epochs: 3
     verbose: false
   seeds: [42]  # Add more seeds as needed
   hyper_search:
@@ -33,7 +33,7 @@ model:
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
-  weight_str: 0.0
+  weight_str: 1.0
   weight_la: 1.0
   weight_ea: 1.0
   weight_reg: 1.0
@@ -42,7 +42,7 @@ model:
   weight_load: 1.0
   num_experts: 3
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean3
-  adv_warmup_epochs: 0
+  adv_warmup_epochs: 1
   adv_ramp_epochs: 0
   str_warmup_epochs: 2
   str_ramp_epochs: 5
@@ -73,4 +73,4 @@ gate:
   model: "GIN"
   depth: 2
   hidden_dim: 32
-  train_after: 1
+  train_after: 2

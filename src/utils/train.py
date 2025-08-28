@@ -27,6 +27,102 @@ warnings.filterwarnings("ignore", message="An issue occurred while importing 'to
 warnings.filterwarnings("ignore", message="You are using `torch.load` with `weights_only=False`")
 
 
+def _named_children_safe(m):
+    try:
+        return dict(m.named_children())
+    except Exception:
+        return {}
+
+def get_gate_modules(model):
+    """
+    Returns (gate_modules_dict, gate_param_list).
+    Covers: gate_enc, gate_mlp, and the tiny _gate_mlp used in _gate_logits_expert_features.
+    Works with DataParallel and plain modules.
+    """
+    moem = model.module if hasattr(model, "module") else model
+    mods = _named_children_safe(moem)
+    gate_mods = {}
+
+    # Canonical gate parts
+    if hasattr(moem, "gate_enc"):  gate_mods["gate_enc"]  = moem.gate_enc
+    if hasattr(moem, "gate_mlp"):  gate_mods["gate_mlp"]  = moem.gate_mlp
+
+    # The small per-expert-feature MLP is created lazily; include it if it exists
+    if hasattr(moem, "_gate_mlp") and (moem._gate_mlp is not None):
+        gate_mods["_gate_mlp"] = moem._gate_mlp
+
+    # Collect parameters
+    gate_params = []
+    for m in gate_mods.values():
+        gate_params += list(m.parameters())
+    return gate_mods, gate_params
+
+def freeze_all_but_gate(model):
+    """
+    Sets requires_grad=False for every parameter except those in the gate (enc+MLPs).
+    Keeps BatchNorms etc. in eval() for frozen parts; gate stays train().
+    """
+    moem = model.module if hasattr(model, "module") else model
+    # 1) Find gate params
+    _, gate_params = get_gate_modules(model)
+    gate_param_ids = {id(p) for p in gate_params}
+
+    # 2) Freeze everything not in gate
+    for p in moem.parameters():
+        p.requires_grad = (id(p) in gate_param_ids)
+
+    # 3) Put frozen submodules to eval() for stability; gate to train()
+    #    (This avoids BN running-stat updates in frozen experts.)
+    if hasattr(moem, "shared"):
+        moem.shared.eval()
+    if hasattr(moem, "gate_enc"):
+        moem.gate_enc.train()
+    if hasattr(moem, "gate_mlp"):
+        moem.gate_mlp.train()
+    if hasattr(moem, "_gate_mlp") and moem._gate_mlp is not None:
+        moem._gate_mlp.train()
+
+
+@torch.no_grad()
+def _bump_epoch_counter(model, steps: int = 1):
+    moem = model.module if hasattr(model, "module") else model
+    moem.set_epoch(moem.current_epoch + int(steps))
+
+def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config):
+    """
+    After loading the best checkpoint: freeze experts, optimize only the gate for a few epochs.
+    Uses your existing train_epoch_moe/evaluate_moe so gradients flow to the gate via:
+      - gate KL/load-balance loss, and
+      - task losses through gate-weighted aggregation (experts are frozen).
+    """
+    gate_epochs = int(config.get('gate', {}).get('finetune_epochs', 5))
+    if gate_epochs <= 0:
+        return  # nothing to do
+
+    # Build gate-only optimizer
+    _, gate_params = get_gate_modules(model)
+    ft_lr = float(config.get('gate', {}).get('finetune_lr', config['training']['lr']))
+    ft_wd = float(config.get('gate', {}).get('finetune_weight_decay', config['training']['weight_decay']))
+    gate_opt = torch.optim.Adam(gate_params, lr=ft_lr, weight_decay=ft_wd)
+
+    # Freeze everything else
+    freeze_all_but_gate(model)
+
+    metric_type = dataset_info['metric']
+    for e in range(1, gate_epochs + 1):
+        # keep epoch counter advancing so routing uses learned gate (post-warmup)
+        _bump_epoch_counter(model, steps=1)
+
+        # Train one epoch (only gate params require grad)
+        train_metrics = train_epoch_moe(model, train_loader, gate_opt, dataset_info, device, epoch=100, config=config)
+
+        # (Optional) quick val to watch overfitting
+        _ = evaluate_moe(model, val_loader, device, metric_type, epoch=0, config=config)
+        _ = evaluate_moe(model, id_val_loader, device, metric_type, epoch=0, config=config)
+
+    # After finetune, keep experts frozen or unfreeze as you wish (we keep frozen).
+
+
 def train_epoch(model, loader, optimizer, dataset_info, device):
     """Train model for one epoch."""
     model.train()
@@ -692,6 +788,11 @@ def train(config, trial=None):
             # Load the best model checkpoint before final evaluation
             logger.logger.info("Loading best model checkpoint for final evaluation...")
             logger.load_best_model(model)
+            # ---- Gate-only fine-tuning from best checkpoint ----
+            try:
+                finetune_gate_only(model, train_loader, val_loader, dataset_info, device, config)
+            except Exception as e:
+                print(f"[WARN] Gate-only fine-tune skipped due to error: {e}")
             
             if config['model']['type'] == 'moe':
                 test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type, epoch, config)

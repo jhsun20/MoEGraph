@@ -404,6 +404,10 @@ class Experts(nn.Module):
                             reduction="none",             # <-- per-sample
                         ) * self._lambda_L                                  # (B,)
                         la = la_vec.mean()                                  # (B,) 
+                    else:
+                        la = hC_k.new_tensor(0.0)
+                        B = hC_k.size(0)
+                        la_vec = hC_k.new_zeros(B)
 
                     # ----- EA / STR (env) with per-sample signals -----
                     if self._lambda_E > 0:
