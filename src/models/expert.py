@@ -108,14 +108,14 @@ class Experts(nn.Module):
         )
 
         # Per-expert maskers
-        self.expert_node_masks = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, 1)
-            )
-            for _ in range(self.num_experts)
-        ])
+        # self.expert_node_masks = nn.ModuleList([
+        #     nn.Sequential(
+        #         nn.Linear(hidden_dim, hidden_dim),
+        #         nn.ReLU(),
+        #         nn.Linear(hidden_dim, 1)
+        #     )
+        #     for _ in range(self.num_experts)
+        # ])
 
         self.expert_edge_masks = nn.ModuleList([
             nn.Sequential(
@@ -204,8 +204,8 @@ class Experts(nn.Module):
 
 
         # Keep-rate priors (trainable) per expert for regularization
-        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.5))
-        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.5))
+        # self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.5))
+        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.4, 0.7))
 
         # print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
 
@@ -269,48 +269,34 @@ class Experts(nn.Module):
         is_eval = not self.training
 
         for k in range(self.num_experts):
-            node_mask_logits = self.expert_node_masks[k](Z)
+            # node_mask_logits = self.expert_node_masks[k](Z)
             edge_mask_logits = self.expert_edge_masks[k](edge_feat)
 
             
-            node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
+            # node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
 
-            use_edges = True
-            if use_edges:
-                # Keep edges as weighted by edge_mask (0 removes, 1 keeps; soft works too)
-                src, dst = edge_index                    # (2, E) — must be Long
-                e_on = edge_mask.view(-1).to(            # (E,)
-                    dtype=torch.float32, device=x.device
-                )
+            # Keep edges as weighted by edge_mask (0 removes, 1 keeps; soft works too)
+            src, dst = edge_index                    # (2, E) — must be Long
+            e_on = edge_mask.view(-1).to(            # (E,)
+                dtype=torch.float32, device=x.device
+            )
 
-                N = x.size(0)
-                node_weight = e_on.new_zeros(N)          # (N,) float — matches e_on
-                node_weight.index_add_(0, src, e_on)
-                node_weight.index_add_(0, dst, e_on)
+            N = x.size(0)
+            node_weight = e_on.new_zeros(N)          # (N,) float — matches e_on
+            node_weight.index_add_(0, src, e_on)
+            node_weight.index_add_(0, dst, e_on)
 
-                # choose hard or soft
-                node_weight = (node_weight > 0).float()  # or: node_weight = node_weight.clamp(max=1.0)
+            # choose hard or soft
+            node_weight = (node_weight > 0).float()  # or: node_weight = node_weight.clamp(max=1.0)
 
-                # logs use what you actually applied
-                node_masks.append(node_weight.view(-1, 1))
-                edge_masks.append(e_on.view(-1, 1))                    
+            # logs use what you actually applied
+            node_masks.append(node_weight.view(-1, 1))
+            edge_masks.append(e_on.view(-1, 1))                    
 
-                # Apply masks to features/graph
-                masked_x   = x * node_weight.view(-1, 1)           # zero-out nodes with no kept incident edges
-                edge_weight = e_on                                  # (E,)
-            else:
-                src, dst = edge_index                                        # (2, E), Long
-                # Soft edge weight = product of endpoint node weights
-                e_soft = (node_mask[src] * node_mask[dst]).to(dtype=torch.float32)       # (E,)
-                e_on = (e_soft > 0).float() 
-                edge_mask = e_on.view(-1, 1)
-
-                node_masks.append(node_mask)
-                edge_masks.append(edge_mask)
-
-                masked_x   = x * node_mask.view(-1, 1)           # zero-out nodes with no kept incident edges
-                edge_weight = e_on.view(-1)                                  # (E,)
+            # Apply masks to features/graph
+            masked_x   = x * node_weight.view(-1, 1)           # zero-out nodes with no kept incident edges
+            edge_weight = e_on                                  # (E,)
 
             h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch)
 
@@ -647,8 +633,8 @@ class Experts(nn.Module):
         if use_fixed_rho:
             rho_node, rho_edge = [float(min(max(v, 0.0), 1.0)) for v in fixed_rho_vals]
         else:
-            rho_node = torch.clamp(self.rho_node[expert_idx], 0.3, 0.5)
-            rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.3, 0.5)
+            # rho_node = torch.clamp(self.rho_node[expert_idx], 0.3, 0.5)
+            rho_edge = torch.clamp(self.rho_edge[expert_idx], 0.2, 0.8)
 
         def per_graph_keep(mask_vals, batch_idx):
             G = batch_idx.max().item() + 1
