@@ -88,7 +88,7 @@ def _bump_epoch_counter(model, steps: int = 1):
     moem = model.module if hasattr(model, "module") else model
     moem.set_epoch(moem.current_epoch + int(steps))
 
-def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config):
+def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config, logger):
     """
     After loading the best checkpoint: freeze experts, optimize only the gate for a few epochs.
     Uses your existing train_epoch_moe/evaluate_moe so gradients flow to the gate via:
@@ -109,6 +109,11 @@ def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_i
     freeze_all_but_gate(model)
 
     metric_type = dataset_info['metric']
+    primary_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
+    if primary_metric == 'loss':
+        best_val_metric = 1000000
+    else:
+        best_val_metric = 0
     for e in range(1, gate_epochs + 1):
         # keep epoch counter advancing so routing uses learned gate (post-warmup)
         _bump_epoch_counter(model, steps=1)
@@ -117,9 +122,17 @@ def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_i
         train_metrics = train_epoch_moe(model, train_loader, gate_opt, dataset_info, device, epoch=100, config=config)
 
         # (Optional) quick val to watch overfitting
-        _ = evaluate_moe(model, val_loader, device, metric_type, epoch=100, config=config)
-        _ = evaluate_moe(model, id_val_loader, device, metric_type, epoch=100, config=config)
+        val_metrics = evaluate_moe(model, val_loader, device, metric_type, epoch=100, config=config)
+        val_id_metrics = evaluate_moe(model, id_val_loader, device, metric_type, epoch=100, config=config)
 
+        current_metric = val_metrics[primary_metric]
+        is_better = (current_metric < best_val_metric - config['training']['early_stopping']['min_delta']) if primary_metric in ['RMSE', 'MAE', 'loss'] else (current_metric > best_val_metric + config['training']['early_stopping']['min_delta'])
+        if is_better:
+            best_val_metric = current_metric
+            patience_counter = 0
+            best_epoch = config['training']['epochs'] + e  # Update best epoch
+            logger.save_model(model, best_epoch, val_metrics)
+            logger.logger.info(f"New best model saved with {primary_metric}: {best_val_metric:.4f}")
     # After finetune, keep experts frozen or unfreeze as you wish (we keep frozen).
 
 
@@ -790,11 +803,12 @@ def train(config, trial=None):
             logger.load_best_model(model)
             # ---- Gate-only fine-tuning from best checkpoint ----
             try:
-                #finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config)
-                finetune_gate_only(model, train_loader, val_loader, test_loader, dataset_info, device, config)
+                #finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config, logger)
+                finetune_gate_only(model, train_loader, val_loader, test_loader, dataset_info, device, config, logger)
             except Exception as e:
                 print(f"[WARN] Gate-only fine-tune skipped due to error: {e}")
-            
+                
+            logger.load_best_model(model)
             if config['model']['type'] == 'moe':
                 test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type, epoch, config)
                 test_id_metrics = evaluate_moe(model, id_test_loader, device, metric_type, epoch, config)
