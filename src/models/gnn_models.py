@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GINConv, SAGEConv, global_mean_pool, global_max_pool, global_add_pool, MessagePassing, BatchNorm
-from torch_geometric.utils import add_self_loops, remove_self_loops, softmax
+from torch_geometric.utils import add_self_loops, remove_self_loops, softmax, coalesce, add_remaining_self_loops
 from torch_geometric.nn.norm import LayerNorm  # <-- use PyG LayerNorm (node-wise)
 
 
@@ -170,16 +170,21 @@ class GINConvWithEdgeWeight(MessagePassing):
 
     def forward(self, x, edge_index, edge_weight=None):
         # Add self-loops to the adjacency matrix
+        num_nodes = x.size(0)
+        device, dtype = x.device, x.dtype
         pre = check_double_self_loops(edge_index, edge_weight, num_nodes=x.size(0))
 
-        edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
+        # If no weights provided, start with ones for existing edges
         if edge_weight is None:
-            edge_weight = torch.ones((edge_index.size(1),), dtype=x.dtype, device=x.device)
-        else:
-            edge_weight = torch.cat([
-                edge_weight,
-                torch.ones(x.size(0), dtype=x.dtype, device=x.device)  # self-loop weight = 1
-            ], dim=0)
+            edge_weight = torch.ones(edge_index.size(1), dtype=dtype, device=device)
+
+        # 1) Merge duplicate edges (including any duplicate self-loops)
+        edge_index, edge_weight = coalesce(edge_index, edge_weight, num_nodes=num_nodes)
+
+        # 2) Add self-loops ONLY where missing; fill those with weight=1
+        edge_index, edge_weight = add_remaining_self_loops(
+            edge_index, edge_weight, fill_value=1.0, num_nodes=num_nodes
+        )
 
         post = check_double_self_loops(edge_index, edge_weight, num_nodes=x.size(0))
 
