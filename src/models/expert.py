@@ -384,13 +384,14 @@ class Experts(nn.Module):
 
                 if not is_eval:
                     if self._lambda_L > 0:
-                        h_spur, edge_weight_spur = self._encode_complement_subgraph(
-                                data=data,
-                                node_mask=node_mask_k,           # (N,1) or (N,)
-                                edge_mask=edge_mask_k.view(-1),  # (E,)
-                                encoder=self.classifier_encoders[k],
-                                symmetrize=False
-                        )
+                        with self._frozen_params(self.classifier_encoders[k]):
+                            h_spur, edge_weight_spur = self._encode_complement_subgraph(
+                                    data=data,
+                                    node_mask=node_mask_k,           # (N,1) or (N,)
+                                    edge_mask=edge_mask_k.view(-1),  # (E,)
+                                    encoder=self.classifier_encoders[k],
+                                    symmetrize=False
+                            )
                                 
                         la_vec = self._spur_loss(
                             h_masked=hC_k,
