@@ -661,8 +661,8 @@ class Experts(nn.Module):
         node_keep_pg = per_graph_keep(node_mask, node_batch)
         edge_keep_pg = per_graph_keep(edge_mask, edge_batch)
 
-        return ((node_keep_pg - rho_node) ** 2).mean() + ((edge_keep_pg - rho_edge) ** 2).mean()
-        #return ((edge_keep_pg - rho_edge) ** 2).mean()
+        #return ((node_keep_pg - rho_node) ** 2).mean() + ((edge_keep_pg - rho_edge) ** 2).mean()
+        return ((edge_keep_pg - rho_edge) ** 2).mean()
 
     def _causal_loss(
         self,
