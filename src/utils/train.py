@@ -117,8 +117,8 @@ def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_i
         train_metrics = train_epoch_moe(model, train_loader, gate_opt, dataset_info, device, epoch=100, config=config)
 
         # (Optional) quick val to watch overfitting
-        _ = evaluate_moe(model, val_loader, device, metric_type, epoch=0, config=config)
-        _ = evaluate_moe(model, id_val_loader, device, metric_type, epoch=0, config=config)
+        _ = evaluate_moe(model, val_loader, device, metric_type, epoch=100, config=config)
+        _ = evaluate_moe(model, id_val_loader, device, metric_type, epoch=100, config=config)
 
     # After finetune, keep experts frozen or unfreeze as you wish (we keep frozen).
 
