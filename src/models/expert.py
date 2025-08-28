@@ -204,8 +204,8 @@ class Experts(nn.Module):
 
 
         # Keep-rate priors (trainable) per expert for regularization
-        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.7))
-        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.7))
+        self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.4, 0.7))
+        self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.4, 0.7))
 
         # print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
 
@@ -558,7 +558,7 @@ class Experts(nn.Module):
         # ---- local hyperparameters (no config dependency) ----
         # weights of each component
         w_corr = 1.0
-        w_uo   = 0.1     # multiplies (coverage + overlap) per modality before averaging
+        w_uo   = 0.001     # multiplies (coverage + overlap) per modality before averaging
 
         # correlation hinge threshold (lower => stricter decorrelation)
         tau_corr = 0.10
