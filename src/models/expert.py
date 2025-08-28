@@ -108,14 +108,14 @@ class Experts(nn.Module):
         )
 
         # Per-expert maskers
-        self.expert_node_masks = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, 1)
-            )
-            for _ in range(self.num_experts)
-        ])
+        # self.expert_node_masks = nn.ModuleList([
+        #     nn.Sequential(
+        #         nn.Linear(hidden_dim, hidden_dim),
+        #         nn.ReLU(),
+        #         nn.Linear(hidden_dim, 1)
+        #     )
+        #     for _ in range(self.num_experts)
+        # ])
 
         self.expert_edge_masks = nn.ModuleList([
             nn.Sequential(
@@ -271,11 +271,11 @@ class Experts(nn.Module):
         for k in range(self.num_experts):
             # print(f"Z.shape: {Z.shape}")
             # print(f"edge_feat.shape: {edge_feat.shape}")
-            node_mask_logits = self.expert_node_masks[k](Z)
+            #node_mask_logits = self.expert_node_masks[k](Z)
             edge_mask_logits = self.expert_edge_masks[k](edge_feat)
 
             
-            node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
+            #node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
             # Enforce symmetry for edges that have reverse edges
             # edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
