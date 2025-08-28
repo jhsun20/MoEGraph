@@ -95,7 +95,7 @@ def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_i
       - gate KL/load-balance loss, and
       - task losses through gate-weighted aggregation (experts are frozen).
     """
-    gate_epochs = int(config.get('gate', {}).get('finetune_epochs', 20))
+    gate_epochs = int(config.get('gate', {}).get('finetune_epochs', 15))
     if gate_epochs <= 0:
         return  # nothing to do
 
@@ -807,7 +807,7 @@ def train(config, trial=None):
                 finetune_gate_only(model, train_loader, val_loader, test_loader, dataset_info, device, config, logger)
             except Exception as e:
                 print(f"[WARN] Gate-only fine-tune skipped due to error: {e}")
-                
+
             logger.load_best_model(model)
             if config['model']['type'] == 'moe':
                 test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type, epoch, config)
