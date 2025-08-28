@@ -108,14 +108,14 @@ class Experts(nn.Module):
         )
 
         # Per-expert maskers
-        # self.expert_node_masks = nn.ModuleList([
-        #     nn.Sequential(
-        #         nn.Linear(hidden_dim, hidden_dim),
-        #         nn.ReLU(),
-        #         nn.Linear(hidden_dim, 1)
-        #     )
-        #     for _ in range(self.num_experts)
-        # ])
+        self.expert_node_masks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, 1)
+            )
+            for _ in range(self.num_experts)
+        ])
 
         self.expert_edge_masks = nn.ModuleList([
             nn.Sequential(
@@ -269,56 +269,48 @@ class Experts(nn.Module):
         is_eval = not self.training
 
         for k in range(self.num_experts):
-            # print(f"Z.shape: {Z.shape}")
-            # print(f"edge_feat.shape: {edge_feat.shape}")
-            #node_mask_logits = self.expert_node_masks[k](Z)
+            node_mask_logits = self.expert_node_masks[k](Z)
             edge_mask_logits = self.expert_edge_masks[k](edge_feat)
 
             
-            #node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
+            node_mask = self._hard_concrete_mask(node_mask_logits, self._mask_temp, is_eval=is_eval)
             edge_mask = self._hard_concrete_mask(edge_mask_logits, self._mask_temp, is_eval=is_eval)
-            # Enforce symmetry for edges that have reverse edges
-            # edge_mask = self.enforce_edge_mask_symmetry(edge_index, edge_mask, num_nodes=Z.size(0))
-            # if k == 0:  # or pick any expert index you want to monitor
-            #     report = mask_symmetry_report(edge_index, edge_mask.view(-1))
-            #     print(f"[Symmetry check, Expert {k}] {report}")
 
-            # --- AFTER you create node_mask, edge_mask, feat_mask for expert k
-            # and BEFORE "Apply masks" ---
-            # Force endpoints on whenever an incident edge is on (hard post-processing).
-            # src, dst = edge_index  # (2, E)
-            # e_on = (edge_mask.view(-1) > 0.5).float()  # ensure hard 0/1 (already hard-concrete, this is just explicit)
+            use_edges = False
+            if use_edges:
+                # Keep edges as weighted by edge_mask (0 removes, 1 keeps; soft works too)
+                src, dst = edge_index                    # (2, E) — must be Long
+                e_on = edge_mask.view(-1).to(            # (E,)
+                    dtype=torch.float32, device=x.device
+                )
 
-            # # Accumulate incident "on" edges per node
-            # N = x.size(0)
-            # inc = node_mask.new_zeros(N)               # float tensor
-            # inc.index_add_(0, src, e_on)
-            # inc.index_add_(0, dst, e_on)
-            # # Any node with at least one kept edge must be on
-            # n_force = (inc > 0).float().view(-1, 1)    # (N,1)
-            # node_mask = torch.maximum(node_mask, n_force)
+                N = x.size(0)
+                node_weight = e_on.new_zeros(N)          # (N,) float — matches e_on
+                node_weight.index_add_(0, src, e_on)
+                node_weight.index_add_(0, dst, e_on)
 
-            # Keep edges as weighted by edge_mask (0 removes, 1 keeps; soft works too)
-            src, dst = edge_index                    # (2, E) — must be Long
-            e_on = edge_mask.view(-1).to(            # (E,)
-                dtype=torch.float32, device=x.device
-            )
+                # choose hard or soft
+                node_weight = (node_weight > 0).float()  # or: node_weight = node_weight.clamp(max=1.0)
 
-            N = x.size(0)
-            node_weight = e_on.new_zeros(N)          # (N,) float — matches e_on
-            node_weight.index_add_(0, src, e_on)
-            node_weight.index_add_(0, dst, e_on)
+                # logs use what you actually applied
+                node_masks.append(node_weight.view(-1, 1))
+                edge_masks.append(e_on.view(-1, 1))                    
 
-            # choose hard or soft
-            node_weight = (node_weight > 0).float()  # or: node_weight = node_weight.clamp(max=1.0)
+                # Apply masks to features/graph
+                masked_x   = x * node_weight.view(-1, 1)           # zero-out nodes with no kept incident edges
+                edge_weight = e_on                                  # (E,)
+            else:
+                src, dst = edge_index                                        # (2, E), Long
+                # Soft edge weight = product of endpoint node weights
+                e_soft = (node_mask[src] * node_mask[dst]).to(dtype=torch.float32)       # (E,)
+                e_on = (e_soft > 0).float() 
+                edge_mask = e_on.view(-1, 1)
 
-            # logs use what you actually applied
-            node_masks.append(node_weight.view(-1, 1))
-            edge_masks.append(e_on.view(-1, 1))                    
+                node_masks.append(node_mask)
+                edge_masks.append(edge_mask)
 
-            # Apply masks to features/graph
-            masked_x   = x * node_weight.view(-1, 1)           # zero-out nodes with no kept incident edges
-            edge_weight = e_on                                  # (E,)
+                masked_x   = x * node_mask.view(-1, 1)           # zero-out nodes with no kept incident edges
+                edge_weight = e_on.view(-1)                                  # (E,)
 
             h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch)
 
