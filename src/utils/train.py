@@ -790,7 +790,8 @@ def train(config, trial=None):
             logger.load_best_model(model)
             # ---- Gate-only fine-tuning from best checkpoint ----
             try:
-                finetune_gate_only(model, train_loader, val_loader, dataset_info, device, config)
+                #finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config)
+                finetune_gate_only(model, train_loader, val_loader, test_loader, dataset_info, device, config)
             except Exception as e:
                 print(f"[WARN] Gate-only fine-tune skipped due to error: {e}")
             
