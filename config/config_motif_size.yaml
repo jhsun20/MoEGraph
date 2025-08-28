@@ -9,7 +9,7 @@ experiment:
     num_samples: 512
     epochs: 50
     verbose: false
-  seeds: [1]  # Add more seeds as needed
+  seeds: [1, 2, 3]  # Add more seeds as needed
   hyper_search:
     enable: false
     n_trials_1: 10
@@ -34,9 +34,9 @@ model:
   global_pooling: "mean"
   num_layers: 3
   dropout: 0.5
-  weight_str: 0.001
-  weight_la: 0.001
-  weight_ea: 0.001
+  weight_str: 0.0
+  weight_la: 0.0
+  weight_ea: 0.0
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 0.2
@@ -51,7 +51,7 @@ model:
 
 # Training configuration
 training:
-  epochs: 60
+  epochs: 50
   lr: 0.001
   weight_decay: 0.0001
   early_stopping:
