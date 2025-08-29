@@ -2,9 +2,10 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-  "config/config_motif_size.yaml"
-  "config/config_sst2.yaml"
-  "config/config_twitter.yaml"
+  "config/config_hiv_scaffold.yaml --rho_edge 0.45"
+  "config/config_hiv_scaffold.yaml --rho_edge 0.55"
+  "config/config_hiv_scaffold.yaml --rho_edge 0.65"
+  "config/config_hiv_scaffold.yaml --rho_edge 0.75"
 )
 
 # Run each config sequentially
