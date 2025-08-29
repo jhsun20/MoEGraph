@@ -1,27 +1,37 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# List of config files to run (edit this list)
-# CONFIGS=(
-#   "config/config_hiv_size.yaml"
-# )
+# Each line: <config_path.yaml> <extra args...>
+readarray -t RUNS <<'EOF'
+config/config_hiv_size.yaml --rho_edge 0.45
+config/config_hiv_size.yaml --rho_edge 0.55
+config/config_hiv_size.yaml --rho_edge 0.65
+config/config_hiv_size.yaml --rho_edge 0.75
+EOF
 
-rhos=(0.45 0.55 0.65 0.75)
-for rho in "${rhos[@]}"; do
-    CONFIGS+=("config/config_hiv_scaffold.yaml --rho_edge $rho")
-done
+for LINE in "${RUNS[@]}"; do
+  # Tokenize the line into $1..$N
+  # shellcheck disable=SC2086
+  set -- $LINE
 
-# Run each config sequentially
-for CONFIG_PATH in "${CONFIGS[@]}"; do
-    NAME=$(basename "$CONFIG_PATH" .yaml)
+  CFG="$1"; shift             # first token is the config path
+  EXTRA_ARGS=("$@")           # the rest are extra args
 
-    echo "=================================="
-    echo "Running experiment: $NAME"
-    echo "=================================="
+  # A readable experiment name
+  NAME="$(basename "$CFG" .yaml)"
+  if ((${#EXTRA_ARGS[@]})); then
+    NAME+="__${EXTRA_ARGS[*]// /_}"
+  fi
 
-    python src/main.py --config "$CONFIG_PATH"
+  echo "=================================="
+  echo "Running experiment: $NAME"
+  echo "=================================="
 
-    # Clear datasets after each run
-    rm -rf /workspace/MoEGraph/datasets/*
+  # Run: --config gets only the YAML path; extras are passed as normal args
+  python src/main.py --config "$CFG" "${EXTRA_ARGS[@]}"
 
-    echo ""
+  # Clear datasets after each run
+  rm -rf /workspace/MoEGraph/datasets/*
+
+  echo ""
 done
