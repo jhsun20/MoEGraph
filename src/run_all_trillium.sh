@@ -2,10 +2,10 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-  "config/config_hiv_scaffold.yaml --rho_edge 0.45"
-  "config/config_hiv_scaffold.yaml --rho_edge 0.55"
-  "config/config_hiv_scaffold.yaml --rho_edge 0.65"
-  "config/config_hiv_scaffold.yaml --rho_edge 0.75"
+  "config/config_HIV_scaffold.yaml --rho_edge 0.45"
+  "config/config_HIV_scaffold.yaml --rho_edge 0.55"
+  "config/config_HIV_scaffold.yaml --rho_edge 0.65"
+  "config/config_HIV_scaffold.yaml --rho_edge 0.75"
 )
 
 # Run each config sequentially
