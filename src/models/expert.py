@@ -542,8 +542,8 @@ class Experts(nn.Module):
         tau_corr = 0.10
 
         # union/overlap targets: encourage U_i >= tau_cov and S_i <= tau_over
-        tau_cov  = 0.60   # require at least ~0.6 union coverage
-        tau_over = 1.20   # allow ≈1 expert on average (softly), >1.2 gets penalized
+        tau_cov  = 0.20   # require at least ~0.6 union coverage
+        tau_over = 1.80   # allow ≈1 expert on average (softly), >1.2 gets penalized
 
         eps = 1e-8
 
