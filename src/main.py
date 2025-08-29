@@ -83,6 +83,7 @@ if __name__ == "__main__":
     parser.add_argument('--weight_str', type=float, help='Weight for structural loss')
     parser.add_argument('--adv_warmup_epochs', type=int, help='Number of epochs for warmup')
     parser.add_argument('--adv_ramp_epochs', type=int, help='Number of epochs for ramp')
+    parser.add_argument('--rho_edge', type=float, help='Rho edge for expert')
 
     # Training arguments
     parser.add_argument('--epochs', type=int, help='Number of training epochs')
@@ -187,6 +188,8 @@ if __name__ == "__main__":
         config['model']['adv_warmup_epochs'] = args.adv_warmup_epochs
     if args.adv_ramp_epochs:
         config['model']['adv_ramp_epochs'] = args.adv_ramp_epochs
+    if args.rho_edge:
+        config['model']['rho_edge'] = args.rho_edge
 
     if args.epochs:
         config['training']['epochs'] = args.epochs
