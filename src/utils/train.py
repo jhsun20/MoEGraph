@@ -95,7 +95,7 @@ def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_i
       - gate KL/load-balance loss, and
       - task losses through gate-weighted aggregation (experts are frozen).
     """
-    gate_epochs = int(config.get('gate', {}).get('finetune_epochs', 15))
+    gate_epochs = int(config.get('gate', {}).get('finetune_epochs', 10))
     if gate_epochs <= 0:
         return  # nothing to do
 
