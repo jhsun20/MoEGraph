@@ -34,9 +34,9 @@ model:
   num_layers: 3
   dropout: 0.5
   pooling: "mean"  # Options: mean, sum, max
-  weight_str: 0.1
-  weight_la: 1.0
-  weight_ea: 1.0
+  weight_str: 0.0
+  weight_la: 0.0
+  weight_ea: 0.0
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 1.0
@@ -51,7 +51,7 @@ model:
 
 # Training configuration
 training:
-  epochs: 100
+  epochs: 200
   lr: 0.001
   weight_decay: 0.001
   early_stopping:
@@ -74,4 +74,4 @@ gate:
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 5
+  train_after: 10
