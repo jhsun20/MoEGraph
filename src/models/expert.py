@@ -536,14 +536,14 @@ class Experts(nn.Module):
         # ---- local hyperparameters (no config dependency) ----
         # weights of each component
         w_corr = 1.0
-        w_uo   = 0.01     # multiplies (coverage + overlap) per modality before averaging
+        w_uo   = 0.0     # multiplies (coverage + overlap) per modality before averaging
 
         # correlation hinge threshold (lower => stricter decorrelation)
         tau_corr = 0.10
 
         # union/overlap targets: encourage U_i >= tau_cov and S_i <= tau_over
-        tau_cov  = 0.20   # require at least ~0.6 union coverage
-        tau_over = 1.80   # allow ≈1 expert on average (softly), >1.2 gets penalized
+        tau_cov  = 0.40   # require at least ~0.6 union coverage
+        tau_over = 1.20   # allow ≈1 expert on average (softly), >1.2 gets penalized
 
         eps = 1e-8
 
