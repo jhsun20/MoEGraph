@@ -2,11 +2,16 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-  "config/config_HIV_scaffold.yaml --rho_edge 0.45"
-  "config/config_HIV_scaffold.yaml --rho_edge 0.55"
-  "config/config_HIV_scaffold.yaml --rho_edge 0.65"
-  "config/config_HIV_scaffold.yaml --rho_edge 0.75"
+  "config/config_hiv_scaffold.yaml"
+  "config/config_hiv_scaffold.yaml"
+  "config/config_hiv_scaffold.yaml"
+  "config/config_hiv_scaffold.yaml"
 )
+
+rhos = [0.45, 0.55, 0.65, 0.75]
+for rho in "${rhos[@]}"; do
+    CONFIGS+=("config/config_hiv_scaffold.yaml --rho_edge $rho")
+done
 
 # Run each config sequentially
 for CONFIG_PATH in "${CONFIGS[@]}"; do
