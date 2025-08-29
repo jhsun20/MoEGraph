@@ -56,7 +56,7 @@ training:
   weight_decay: 0.0001
   early_stopping:
     patience: 20
-    min_delta: 0.01
+    min_delta: 0.001
 
 # Logging configuration
 logging:
