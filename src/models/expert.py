@@ -206,8 +206,8 @@ class Experts(nn.Module):
         # Keep-rate priors (trainable) per expert for regularization
         self.rho_node = nn.Parameter(torch.empty(self.num_experts).uniform_(0.3, 0.5))
         # self.rho_edge = nn.Parameter(torch.empty(self.num_experts).uniform_(0.4, 0.6))
-        rho_edge_config = config.get('model', {}).get('rho_edge', 0.5)
-        self.rho_edge = nn.Parameter(torch.full((self.num_experts,), rho_edge_config))
+        self.rho_edge_config = config.get('model', {}).get('rho_edge', 0.5)
+        self.rho_edge = nn.Parameter(torch.full((self.num_experts,), self.rho_edge_config))
 
         # print(f"dataset_info['num_envs']: {dataset_info['num_envs']}")
 
