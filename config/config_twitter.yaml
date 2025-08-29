@@ -46,6 +46,7 @@ model:
   adv_ramp_epochs: 5
   strinv_warmup_epochs: 1
   strinv_ramp_epochs: 1
+  rho_edge: 0.55
 
 
 # Training configuration
