@@ -88,7 +88,7 @@ def _bump_epoch_counter(model, steps: int = 1):
     moem = model.module if hasattr(model, "module") else model
     moem.set_epoch(moem.current_epoch + int(steps))
 
-def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config, logger):
+def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config, logger, best):
     """
     After loading the best checkpoint: freeze experts, optimize only the gate for a few epochs.
     Uses your existing train_epoch_moe/evaluate_moe so gradients flow to the gate via:
@@ -110,10 +110,7 @@ def finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_i
 
     metric_type = dataset_info['metric']
     primary_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
-    if primary_metric == 'loss':
-        best_val_metric = 1000000
-    else:
-        best_val_metric = 0
+    best_val_metric = best
     for e in range(1, gate_epochs + 1):
         # keep epoch counter advancing so routing uses learned gate (post-warmup)
         _bump_epoch_counter(model, steps=1)
@@ -803,8 +800,8 @@ def train(config, trial=None):
             logger.load_best_model(model)
             # ---- Gate-only fine-tuning from best checkpoint ----
             try:
-                #finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config, logger)
-                finetune_gate_only(model, train_loader, val_loader, test_loader, dataset_info, device, config, logger)
+                #finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config, logger, best_val_metric)
+                finetune_gate_only(model, train_loader, val_loader, test_loader, dataset_info, device, config, logger, best_val_metric)
             except Exception as e:
                 print(f"[WARN] Gate-only fine-tune skipped due to error: {e}")
 
