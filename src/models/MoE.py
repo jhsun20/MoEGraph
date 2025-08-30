@@ -341,7 +341,7 @@ class MoE(nn.Module):
         w_cb = (1.0 / eff_num).clamp_min(1e-8)
         w_cb = (w_cb / w_cb.sum()).detach()
 
-        label_smoothing = True
+        label_smoothing = False
         for k in range(K):
             logits = stacked_logits[k]
 
