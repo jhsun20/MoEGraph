@@ -9,7 +9,7 @@ experiment:
     num_samples: 512
     epochs: 50
     verbose: false
-  seeds: [1]  # Add more seeds as needed
+  seeds: [1, 2, 3, 4, 5]  # Add more seeds as needed
   hyper_search:
     enable: false
     n_trials_1: 10
@@ -22,7 +22,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 32
+  batch_size: 256
   num_workers: 4
   domain: 'size' # scaffold or size
 
@@ -36,7 +36,7 @@ model:
   global_pooling: "sum"  # Options: mean, sum, max
   weight_str: 0.0
   weight_la: 0.0
-  weight_ea: 0.00
+  weight_ea: 0.0
   weight_reg: 1.0
   weight_ce: 1.0
   weight_div: 1.0
@@ -47,12 +47,12 @@ model:
   adv_ramp_epochs: 20
   strinv_warmup_epochs: 1
   strinv_ramp_epochs: 1
-  rho_edge: 0.55
+  rho_edge: 0.9
 
 
 # Training configuration
 training:
-  epochs: 50
+  epochs: 100
   lr: 0.001
   weight_decay: 0.0001
   early_stopping:
