@@ -336,16 +336,15 @@ class MoE(nn.Module):
             return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
         # ---- GOOD-HIV variants (as you already added) ----
-        tau_logitadj, beta_cb, gamma_focal, eps_smooth = 1.0, 0.999, 2.0, 0.05
-        eps = 1e-8
+        tau_logitadj, gamma_focal, eps_smooth = 1.0, 2.0, 0.05
 
         counts = torch.bincount(y, minlength=C).float().to(device)
         counts[counts == 0] = 1.0
         prior = (counts / counts.sum()).clamp_min(1e-8)
 
-        eff_num = (1.0 - counts.pow(beta_cb)) / (1.0 - beta_cb)
-        w_cb = (1.0 / eff_num).clamp_min(1e-8)
-        w_cb = (w_cb / w_cb.sum()).detach()
+        # ---- accumulate expert-wise AUC loss (scalar) ----
+        auc_weight = float(getattr(self, "weight_auc", 0.1))
+        topk_neg_auc = int(getattr(self, "topk_neg_auc", 32))
 
         label_smoothing = False
         for k in range(K):
@@ -364,13 +363,17 @@ class MoE(nn.Module):
             else:
                 ce_la = F.cross_entropy(logits_la, y, reduction='none')
 
-            pt_la       = logp_la.exp().gather(1, y[:,None]).squeeze(1).clamp_min(1e-8)
-            ce_flat_la  = F.nll_loss(logp_la, y, reduction='none') * 10
-            ce_focal_la = (1 - pt_la).pow(gamma_focal) * ce_flat_la           # LA + Focal
+            # 2) Pairwise AUC on a margin score (binary)
+            #    Use a *margin* s = logit_pos - logit_neg so the pairwise diff works naturally.
+            #    (No detach: we WANT gradients to flow to expert logits.)
+            margin_scores = logits[:, 1] - logits[:, 0]          # (B,)
+            auc_loss_k = self._auc_pairwise_ranknet_binary(
+                scores=margin_scores, labels=y, topk_neg=topk_neg_auc
+            )                                                    # scalar
 
-            # combine (sum or average — up to you)
-            # ce_all = ce_la + ce_cb + ce_focal + ce_ls
-            ce_all = ce_la
+            # 3) Sum CE (per-sample) + weighted AUC (scalar) → broadcast add
+            # print(ce_la, auc_loss_k)
+            ce_all = ce_la + auc_weight * auc_loss_k
             ce_bk[:, k] = ce_all
 
         return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
@@ -412,3 +415,34 @@ class MoE(nn.Module):
         return L_bal + lam * H_rows + 0.2 * L_top1
     
     
+    @staticmethod
+    def _auc_pairwise_ranknet_binary(scores: torch.Tensor,
+                                    labels: torch.Tensor,
+                                    topk_neg: int = 32) -> torch.Tensor:
+        """
+        scores: (B,)  higher = more likely positive (e.g., margin logit: logit_pos - logit_neg)
+        labels: (B,)  0/1
+        Returns scalar RankNet logistic pairwise loss over (pos, hard-neg) pairs.
+        """
+        y = labels.view(-1).long()
+        s = scores.view(-1)
+
+        pos_idx = (y == 1).nonzero(as_tuple=True)[0]
+        neg_idx = (y == 0).nonzero(as_tuple=True)[0]
+        if pos_idx.numel() == 0 or neg_idx.numel() == 0:
+            # no pairs in this batch → zero loss (keeps graph intact)
+            return s.new_zeros(())
+
+        # hard-negative mining: keep top-K highest-scoring negatives
+        with torch.no_grad():
+            s_neg_all = s[neg_idx]
+            if s_neg_all.numel() > topk_neg:
+                topk_vals, topk_ids = torch.topk(s_neg_all, k=topk_neg)
+                neg_idx = neg_idx[topk_ids]
+
+        s_pos = s[pos_idx].unsqueeze(1)   # (P,1)
+        s_neg = s[neg_idx].unsqueeze(0)   # (1,N)
+        diff  = s_pos - s_neg             # (P,N)
+
+        # RankNet logistic loss
+        return torch.log1p(torch.exp(-diff)).mean()
