@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moeuil_diverse_sparse_zinc" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moe_zinc" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -31,19 +31,23 @@ model:
   type: "moe"  # Options: GIN, GCN, GraphSAGE, moe
   parallel: false
   hidden_dim: 300
+  global_pooling: "mean"
   num_layers: 3
   dropout: 0.5
-  pooling: "mean"  # Options: mean, sum, max
   weight_str: 0.0
-  weight_la: 0.03
-  weight_ea: 0.03
+  weight_la: 0.0
+  weight_ea: 0.0
   weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 0.5
+  weight_div: 1.0
   weight_load: 0.5
-  num_experts: 6
+  num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
-
+  adv_warmup_epochs: 5
+  adv_ramp_epochs: 30
+  strinv_warmup_epochs: 5
+  strinv_ramp_epochs: 5
+  rho_edge: 0.65
 
 # Training configuration
 training:

@@ -345,7 +345,13 @@ class Experts(nn.Module):
                 edge_mask_k = edge_masks[:, k, :]
 
                 # ----- CE (per-sample + scalar) -----
-                ce_vec = F.cross_entropy(logits_k, target.view(-1).long(), reduction='none') * self.weight_ce  # (B,)
+                if self.metric == "Accuracy":
+                    ce_vec = F.cross_entropy(logits_k, target.view(-1).long(), reduction='none') * self.weight_ce  # (B,)
+                else:
+                    pred = logits_k.squeeze(-1).float()
+                    y = target.float()
+                    #print(pred.shape, y.shape)
+                    ce_vec = F.l1_loss(pred, y, reduction='none') * self.weight_ce  # (B,
                 ce = ce_vec.mean()
                 ce_ps.append(ce_vec)
                 ce_list.append(ce)

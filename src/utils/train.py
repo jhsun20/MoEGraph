@@ -678,10 +678,10 @@ def train(config, trial=None):
             logger.logger.info("Starting training...")
         # primary_metric = 'loss'
         primary_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
-        if primary_metric == 'loss':
-            best_val_metric = 1000000
-        else:
+        if primary_metric == 'accuracy':
             best_val_metric = 0
+        else:
+            best_val_metric = 1000000
         patience_counter = 0
         best_epoch = 0  # Track the best epoch
         
@@ -762,7 +762,7 @@ def train(config, trial=None):
             # print(f"current_metric: {current_metric}")
             current_eval_metric = val_metrics[eval_metric]
             # For error metrics like RMSE and MAE, lower is better
-            is_better = (current_metric < best_val_metric - config['training']['early_stopping']['min_delta']) if primary_metric in ['RMSE', 'MAE', 'loss'] else (current_metric > best_val_metric + config['training']['early_stopping']['min_delta'])
+            is_better = (current_metric < best_val_metric - config['training']['early_stopping']['min_delta']) if primary_metric in ['rmse', 'mae', 'loss'] else (current_metric > best_val_metric + config['training']['early_stopping']['min_delta'])
             
             if is_better:
                 best_val_metric = current_metric

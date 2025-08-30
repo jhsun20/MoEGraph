@@ -326,11 +326,17 @@ class MoE(nn.Module):
 
         if self.dataset_name != "GOODHIV":
             for k in range(K):
-                ce_bk[:, k] = F.cross_entropy(stacked_logits[k], y, reduction='none')
+                if self.metric == "Accuracy":
+                    ce_bk[:, k] = F.cross_entropy(stacked_logits[k], y, reduction='none')
+                else:
+                    pred = stacked_logits[k].squeeze(-1).float()
+                    target = y.float()
+                    #print(pred.shape, target.shape)
+                    ce_bk[:, k] = F.l1_loss(pred, target, reduction='none')
             return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
         # ---- GOOD-HIV variants (as you already added) ----
-        tau_logitadj, beta_cb, gamma_focal, eps_smooth = 1.0, 0.999, 2.0, 0.05
+        tau_logitadj, beta_cb, gamma_focal, eps_smooth = 1.2, 0.999, 2.0, 0.05
         eps = 1e-8
 
         counts = torch.bincount(y, minlength=C).float().to(device)
