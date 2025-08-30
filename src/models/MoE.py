@@ -341,27 +341,30 @@ class MoE(nn.Module):
         w_cb = (1.0 / eff_num).clamp_min(1e-8)
         w_cb = (w_cb / w_cb.sum()).detach()
 
+        label_smoothing = True
         for k in range(K):
             logits = stacked_logits[k]
 
-            logits_la = logits + tau_logitadj * prior.log().view(1, -1)
-            ce_la = F.cross_entropy(logits_la, y, reduction='none') * 10
-
-            ce_cb = F.cross_entropy(logits, y, reduction='none', weight=w_cb)
-
-            logp = F.log_softmax(logits, dim=1)
-            pt   = logp.exp().gather(1, y.view(-1,1)).squeeze(1).clamp_min(eps)
-            ce_flat  = F.nll_loss(logp, y, reduction='none')
-            ce_focal = (1.0 - pt).pow(gamma_focal) * ce_flat * 10
-
+            # 0) Build smoothed targets once (used by LS variants)
+            logp_base = F.log_softmax(logits, dim=1)
             with torch.no_grad():
-                q = torch.full_like(logp, eps_smooth / (C - 1))
-                q.scatter_(1, y.view(-1,1), 1.0 - eps_smooth)
-            ce_ls = -(q * logp).sum(dim=1)
+                q = torch.full_like(logp_base, eps_smooth / (C - 1))
+                q.scatter_(1, y.view(-1,1), 1.0 - eps_smooth)   # (B,C)
+
+            logits_la = logits + tau_logitadj * prior.log().view(1, -1)
+            logp_la    = F.log_softmax(logits_la, dim=1)
+            if label_smoothing:
+                ce_la   = -(q * logp_la).sum(dim=1) * 10
+            else:
+                ce_la = F.cross_entropy(logits_la, y, reduction='none') * 10
+
+            pt_la       = logp_la.exp().gather(1, y[:,None]).squeeze(1).clamp_min(1e-8)
+            ce_flat_la  = F.nll_loss(logp_la, y, reduction='none') * 10
+            ce_focal_la = (1 - pt_la).pow(gamma_focal) * ce_flat_la           # LA + Focal
 
             # combine (sum or average — up to you)
             # ce_all = ce_la + ce_cb + ce_focal + ce_ls
-            ce_all = ce_la
+            ce_all = ce_focal_la
             ce_bk[:, k] = ce_all
 
         return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
