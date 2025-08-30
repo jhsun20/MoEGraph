@@ -54,7 +54,7 @@ class MoE(nn.Module):
         gcfg = config.get('gate', {})
         self.gate_tau_oracle = float(gcfg.get('tau_oracle', 0.75))     # softness for teacher
         self.gate_temperature = float(gcfg.get('temperature', 1.0))    # scales gate_scores
-        self.weight_gate      = float(gcfg.get('weight_gate', 1.0))    # total gate loss weight
+        self.weight_gate      = float(gcfg.get('weight_gate', 0.1))    # total gate loss weight
         self.weight_gate_oracle = float(gcfg.get('weight_oracle', 1.0))# teacher KL weight
         self.gate_teacher_w_ea = float(gcfg.get('teacher_w_ea', 1.0))  # + means "more invariant" is better
         self.gate_teacher_w_la = float(gcfg.get('teacher_w_la', 1.0))  # + means "less leakage" is better
@@ -336,7 +336,7 @@ class MoE(nn.Module):
             return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
         # ---- GOOD-HIV variants (as you already added) ----
-        tau_logitadj, beta_cb, gamma_focal, eps_smooth = 1.2, 0.999, 2.0, 0.05
+        tau_logitadj, beta_cb, gamma_focal, eps_smooth = 1.0, 0.999, 2.0, 0.05
         eps = 1e-8
 
         counts = torch.bincount(y, minlength=C).float().to(device)
@@ -362,7 +362,7 @@ class MoE(nn.Module):
             if label_smoothing:
                 ce_la   = -(q * logp_la).sum(dim=1) * 10
             else:
-                ce_la = F.cross_entropy(logits_la, y, reduction='none') * 10
+                ce_la = F.cross_entropy(logits_la, y, reduction='none')
 
             pt_la       = logp_la.exp().gather(1, y[:,None]).squeeze(1).clamp_min(1e-8)
             ce_flat_la  = F.nll_loss(logp_la, y, reduction='none') * 10
