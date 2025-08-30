@@ -326,7 +326,7 @@ class MoE(nn.Module):
 
         if self.dataset_name != "GOODHIV":
             for k in range(K):
-                ce_bk[:, k] = F.cross_entropy(stacked_logits[k], y, reduction='none') * self.weight_ce
+                ce_bk[:, k] = F.cross_entropy(stacked_logits[k], y, reduction='none')
             return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
         # ---- GOOD-HIV variants (as you already added) ----
@@ -352,7 +352,7 @@ class MoE(nn.Module):
             logp = F.log_softmax(logits, dim=1)
             pt   = logp.exp().gather(1, y.view(-1,1)).squeeze(1).clamp_min(eps)
             ce_flat  = F.nll_loss(logp, y, reduction='none')
-            ce_focal = (1.0 - pt).pow(gamma_focal) * ce_flat * self.weight_ce
+            ce_focal = (1.0 - pt).pow(gamma_focal) * ce_flat * 10
 
             with torch.no_grad():
                 q = torch.full_like(logp, eps_smooth / (C - 1))
@@ -361,7 +361,7 @@ class MoE(nn.Module):
 
             # combine (sum or average — up to you)
             # ce_all = ce_la + ce_cb + ce_focal + ce_ls
-            ce_all = ce_focal
+            ce_all = ce_cb
             ce_bk[:, k] = ce_all
 
         return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
