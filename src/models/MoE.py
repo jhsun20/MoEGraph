@@ -345,7 +345,7 @@ class MoE(nn.Module):
             logits = stacked_logits[k]
 
             logits_la = logits + tau_logitadj * prior.log().view(1, -1)
-            ce_la = F.cross_entropy(logits_la, y, reduction='none')
+            ce_la = F.cross_entropy(logits_la, y, reduction='none') * 10
 
             ce_cb = F.cross_entropy(logits, y, reduction='none', weight=w_cb)
 
