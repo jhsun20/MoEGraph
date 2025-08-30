@@ -418,11 +418,16 @@ class MoE(nn.Module):
     @staticmethod
     def _auc_pairwise_ranknet_binary(scores: torch.Tensor,
                                     labels: torch.Tensor,
-                                    topk_neg: int = 32) -> torch.Tensor:
+                                    topk_neg: int = 32,
+                                    tau_auc: float = 2.0,
+                                    clip: float = 50.0) -> torch.Tensor:
         """
-        scores: (B,)  higher = more likely positive (e.g., margin logit: logit_pos - logit_neg)
-        labels: (B,)  0/1
-        Returns scalar RankNet logistic pairwise loss over (pos, hard-neg) pairs.
+        Stable RankNet-style pairwise loss for binary AUC.
+        - scores: (B,) real-valued margin proxy (higher => more positive)
+        - labels: (B,) in {0,1}
+        - tau_auc: temperature to cool margins (larger => smaller diffs)
+        - clip: clamp |diff| to avoid extreme tails
+        Returns a scalar loss.
         """
         y = labels.view(-1).long()
         s = scores.view(-1)
@@ -430,19 +435,24 @@ class MoE(nn.Module):
         pos_idx = (y == 1).nonzero(as_tuple=True)[0]
         neg_idx = (y == 0).nonzero(as_tuple=True)[0]
         if pos_idx.numel() == 0 or neg_idx.numel() == 0:
-            # no pairs in this batch → zero loss (keeps graph intact)
             return s.new_zeros(())
 
-        # hard-negative mining: keep top-K highest-scoring negatives
+        # hard-negative mining
         with torch.no_grad():
             s_neg_all = s[neg_idx]
             if s_neg_all.numel() > topk_neg:
-                topk_vals, topk_ids = torch.topk(s_neg_all, k=topk_neg)
+                _, topk_ids = torch.topk(s_neg_all, k=topk_neg)
                 neg_idx = neg_idx[topk_ids]
 
-        s_pos = s[pos_idx].unsqueeze(1)   # (P,1)
-        s_neg = s[neg_idx].unsqueeze(0)   # (1,N)
-        diff  = s_pos - s_neg             # (P,N)
+        s_pos = s[pos_idx].unsqueeze(1)    # (P,1)
+        s_neg = s[neg_idx].unsqueeze(0)    # (1,N)
 
-        # RankNet logistic loss
-        return torch.log1p(torch.exp(-diff)).mean()
+        # (pos - neg) / tau, then clamp
+        diff = (s_pos - s_neg) / max(tau_auc, 1e-6)
+        if clip is not None and clip > 0:
+            diff = diff.clamp(min=-clip, max=clip)
+
+        # stable log(1 + exp(-diff)) using logaddexp
+        # equivalently: F.softplus(-diff), but logaddexp is explicit and robust
+        loss = torch.logaddexp(diff.new_zeros(()), -diff).mean()
+        return loss
