@@ -183,11 +183,14 @@ class MoE(nn.Module):
         # ----- Teacher: oracle from per-expert CE (stop-grad) -----
         with torch.no_grad():
             # Per-sample, per-expert task CE (lower is better)
-            ce_per = F.cross_entropy(
-                expert_logits.reshape(B*K, C),
-                targets.repeat_interleave(K),
-                reduction='none'
-            ).reshape(B, K)                                       # (B,K)
+
+            # uniform weights: each expert equally weighted (K,B)
+            uni = torch.full((K, B), 1.0 / K, device=expert_logits.device)
+
+            # reuse same CE construction (incl. GOOD-HIV variants) to get (B,K)
+            ce_per = self._gate_weighted_ce(
+                expert_logits.transpose(0,1), targets, uni, return_matrix=True
+            )  # (B,K)
 
             # Start from -CE
             r = -ce_per
@@ -308,86 +311,61 @@ class MoE(nn.Module):
 
         scores = self._gate_mlp(Phi).squeeze(-1)  # (B,K)
         return scores
-
-    def _gate_weighted_ce(self, stacked_logits, targets, gate_weights):
+    
+    def _gate_weighted_ce(self, stacked_logits, targets, gate_weights, return_matrix: bool = False):
         """
         stacked_logits: (K, B, C)
         gate_weights:   (K, B)
+        return_matrix:  if True -> return (B,K) CE for each (sample, expert)
         """
+
         K, B, C = stacked_logits.shape
         device = stacked_logits.device
-
-        # --------- Helper: vanilla gate-weighted CE (your original) ---------
-        def _vanilla():
-            loss = stacked_logits[0, :, 0].new_tensor(0.0)
-            for k in range(K):
-                ce_per_sample = F.cross_entropy(stacked_logits[k], targets, reduction='none')  # (B,)
-                loss += (gate_weights[k] * ce_per_sample).mean()
-            return loss
-
-        # If not GOOD-HIV, keep your original behavior
-        # NOTE: we can't access self here (staticmethod), so detect via logits metadata if needed.
-        # The caller is MoE._aggregate(), which *does* know dataset_name.
-        # => Easiest robust path: stash dataset_name on a device tensor on call or switch to instance method.
-        # For now we detect via a convention: if the caller set an attribute on function (hacky but simple).
-        if self.dataset_name != "GOODHIV":
-            return _vanilla()
-
-        # --------- GOOD-HIV: compute four options per expert, per sample ---------
-        # Hyperparams you can tweak
-        tau_logitadj  = 1.0     # Menon et al. temperature on log-prior
-        beta_cb       = 0.999   # Class-balanced beta (effective number)
-        gamma_focal   = 2.0     # Focal gamma
-        eps_smooth    = 0.05    # Label smoothing epsilon
-        eps           = 1e-8
-
-        # Priors / class weights from the *current batch* (quick-and-dirty; replace with train priors if you cache them)
         y = targets.view(-1).long().to(device)
+        ce_bk = stacked_logits[0, :, 0].new_zeros(B, K)  # will hold (B,K)
+
+        if self.dataset_name != "GOODHIV":
+            for k in range(K):
+                ce_bk[:, k] = F.cross_entropy(stacked_logits[k], y, reduction='none')
+            return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
+
+        # ---- GOOD-HIV variants (as you already added) ----
+        tau_logitadj, beta_cb, gamma_focal, eps_smooth = 1.0, 0.999, 2.0, 0.05
+        eps = 1e-8
+
         counts = torch.bincount(y, minlength=C).float().to(device)
         counts[counts == 0] = 1.0
-        prior = (counts / counts.sum()).clamp_min(1e-8)                       # (C,)
+        prior = (counts / counts.sum()).clamp_min(1e-8)
 
-        # Class-balanced weights (Cui et al.)
         eff_num = (1.0 - counts.pow(beta_cb)) / (1.0 - beta_cb)
         w_cb = (1.0 / eff_num).clamp_min(1e-8)
-        w_cb = (w_cb / w_cb.sum()).detach()                                    # (C,)
-
-        loss = stacked_logits[0, :, 0].new_tensor(0.0)
+        w_cb = (w_cb / w_cb.sum()).detach()
 
         for k in range(K):
-            logits = stacked_logits[k]                                          # (B,C)
+            logits = stacked_logits[k]
 
-            # ---------- 1) Logit-Adjusted CE ----------
-            logits_la = logits + tau_logitadj * prior.log().view(1, -1)         # shift by log-prior
-            ce_la = F.cross_entropy(logits_la, y, reduction='none')             # (B,)
+            logits_la = logits + tau_logitadj * prior.log().view(1, -1)
+            ce_la = F.cross_entropy(logits_la, y, reduction='none')
 
-            # ---------- 2) Class-Balanced CE (effective number) ----------
-            ce_cb = F.cross_entropy(logits, y, reduction='none', weight=w_cb)   # (B,)
+            ce_cb = F.cross_entropy(logits, y, reduction='none', weight=w_cb)
 
-            # ---------- 3) Focal Loss ----------
-            logp = F.log_softmax(logits, dim=1)                                 # (B,C)
-            p    = logp.exp().clamp_min(eps)                                    # (B,C)
-            pt   = p[torch.arange(B, device=device), y]                         # (B,)
-            focal_term = (1.0 - pt).pow(gamma_focal)                            # (B,)
-            ce_flat = F.nll_loss(logp, y, reduction='none')                     # (B,) = -log p_y
-            ce_focal = focal_term * ce_flat                                     # (B,)
+            logp = F.log_softmax(logits, dim=1)
+            pt   = logp.exp().gather(1, y.view(-1,1)).squeeze(1).clamp_min(eps)
+            ce_flat  = F.nll_loss(logp, y, reduction='none')
+            ce_focal = (1.0 - pt).pow(gamma_focal) * ce_flat
 
-            # ---------- 4) Label-Smoothing CE ----------
-            # Build smoothed targets and compute per-sample CE = -sum q * log p
             with torch.no_grad():
                 q = torch.full_like(logp, eps_smooth / (C - 1))
-                q.scatter_(1, y.view(-1, 1), 1.0 - eps_smooth)                  # (B,C)
-            ce_ls = -(q * logp).sum(dim=1)                                      # (B,)
+                q.scatter_(1, y.view(-1,1), 1.0 - eps_smooth)
+            ce_ls = -(q * logp).sum(dim=1)
 
-            # Sum (you can comment any of these lines to ablate)
-            # ce_all = ce_la + ce_cb + ce_focal + ce_ls                            # (B,)
-            ce_all = ce_focal                         # (B,)
+            # combine (sum or average — up to you)
+            # ce_all = ce_la + ce_cb + ce_focal + ce_ls
+            ce_all = ce_focal
+            ce_bk[:, k] = ce_all
 
-            # Gate-weight the per-sample vector and average
-            print('goodhiv so using focal')
-            loss += (gate_weights[k] * ce_all).mean()
+        return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
-        return loss
 
     @staticmethod
     def _load_balance(gate_probs, lam=0.2, T=0.2, eps=1e-12):
