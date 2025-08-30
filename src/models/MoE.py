@@ -361,11 +361,7 @@ class MoE(nn.Module):
 
             # combine (sum or average — up to you)
             # ce_all = ce_la + ce_cb + ce_focal + ce_ls
-            print('ce_la', ce_la)
-            print('ce_cb', ce_cb)
-            print('ce_focal', ce_focal)
-            print('ce_ls', ce_ls)
-            ce_all = ce_cb
+            ce_all = ce_la
             ce_bk[:, k] = ce_all
 
         return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
