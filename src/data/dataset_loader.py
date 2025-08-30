@@ -7,6 +7,8 @@ import os
 import random
 import warnings
 from torch_geometric.datasets import *
+from torch.utils.data import WeightedRandomSampler
+
 from data.good import *
 
 # Suppress user warnings
@@ -91,14 +93,22 @@ def load_dataset(config):
 
     # --- TRAIN LOADER ---
     if dataset_name == 'GOODHIV':
-        # Extract graph-level labels for stratification
-        labels_train = [int(d.y.item()) for d in datasets['train']]
-        # choose how many positives per batch you want
-        pos_per_batch = max(1, batch_size // 16)  # e.g., ~6% of batch; tune as you like
-        train_sampler = StratifiedBatchSampler(labels_train, batch_size=batch_size, pos_per_batch=pos_per_batch)
+        # Build per-sample weights: inverse class frequency
+        labels_train = torch.tensor([int(d.y.item()) for d in datasets['train']], dtype=torch.long)
+        class_counts = torch.bincount(labels_train, minlength=2).float().clamp_min(1.0)
+        inv_freq = (1.0 / class_counts)
+        weights = inv_freq[labels_train]  # per-sample weight
+
+        sampler = WeightedRandomSampler(
+            weights=weights,
+            num_samples=len(labels_train),   # one "epoch"
+            replacement=True                 # allow re-sampling positives
+        )
+
         train_loader = DataLoader(
             datasets['train'],
-            batch_sampler=train_sampler,
+            batch_size=batch_size,
+            sampler=sampler,             
             num_workers=num_workers
         )
     else:
@@ -171,45 +181,3 @@ def load_dataset(config):
         'id_test_loader': id_test_loader,
         'dataset_info': dataset_info
     }
-
-
-class StratifiedBatchSampler:
-    """
-    Guarantees at least `pos_per_batch` positives in every batch.
-    For imbalanced binary datasets like GOOD-HIV.
-    """
-    def __init__(self, labels, batch_size, pos_per_batch=1, drop_last=False):
-        import numpy as np
-        self.labels = np.array(labels, dtype=int)
-        self.pos_idx = np.where(self.labels == 1)[0]
-        self.neg_idx = np.where(self.labels == 0)[0]
-        self.batch_size = int(batch_size)
-        self.pos_per_batch = int(min(pos_per_batch, self.batch_size))
-        self.drop_last = drop_last
-
-    def __iter__(self):
-        import numpy as np
-        # Shuffle pools each epoch
-        pos = np.random.permutation(self.pos_idx)
-        neg = np.random.permutation(self.neg_idx)
-        p_ptr, n_ptr = 0, 0
-        # Replenish by wrapping (positives are rare)
-        while True:
-            if p_ptr + self.pos_per_batch > len(pos):  pos = np.random.permutation(self.pos_idx); p_ptr = 0
-            need_neg = self.batch_size - self.pos_per_batch
-            if n_ptr + need_neg > len(neg):            neg = np.random.permutation(self.neg_idx); n_ptr = 0
-            batch = np.concatenate([pos[p_ptr:p_ptr+self.pos_per_batch],
-                                    neg[n_ptr:n_ptr+need_neg]])
-            p_ptr += self.pos_per_batch; n_ptr += need_neg
-            # local shuffle inside batch
-            np.random.shuffle(batch)
-            yield batch.tolist()
-            # stop when roughly one epoch of negatives is consumed
-            if n_ptr >= len(self.neg_idx):
-                if not self.drop_last:
-                    continue
-                break
-
-    def __len__(self):
-        # approximate number of batches per epoch (controlled by negatives)
-        return max(1, len(self.neg_idx) // max(1, self.batch_size - self.pos_per_batch))
