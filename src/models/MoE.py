@@ -343,7 +343,7 @@ class MoE(nn.Module):
         prior = (counts / counts.sum()).clamp_min(1e-8)
 
         # ---- accumulate expert-wise AUC loss (scalar) ----
-        auc_weight = float(getattr(self, "weight_auc", 0.1))
+        auc_weight = float(getattr(self, "weight_auc", 0.01))
         topk_neg_auc = int(getattr(self, "topk_neg_auc", 32))
 
         label_smoothing = False
