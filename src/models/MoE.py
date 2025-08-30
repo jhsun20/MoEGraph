@@ -384,6 +384,7 @@ class MoE(nn.Module):
             ce_all = ce_focal                         # (B,)
 
             # Gate-weight the per-sample vector and average
+            print('goodhiv so using focal')
             loss += (gate_weights[k] * ce_all).mean()
 
         return loss
