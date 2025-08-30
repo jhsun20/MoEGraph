@@ -330,7 +330,7 @@ class MoE(nn.Module):
             return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
         # ---- GOOD-HIV variants (as you already added) ----
-        tau_logitadj, beta_cb, gamma_focal, eps_smooth = 0.4, 0.999, 2.0, 0.05
+        tau_logitadj, beta_cb, gamma_focal, eps_smooth = 0.6, 0.999, 2.0, 0.05
         eps = 1e-8
 
         counts = torch.bincount(y, minlength=C).float().to(device)
@@ -364,7 +364,7 @@ class MoE(nn.Module):
 
             # combine (sum or average — up to you)
             # ce_all = ce_la + ce_cb + ce_focal + ce_ls
-            ce_all = ce_focal_la
+            ce_all = ce_la
             ce_bk[:, k] = ce_all
 
         return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
