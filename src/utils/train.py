@@ -678,7 +678,7 @@ def train(config, trial=None):
             logger.logger.info("Starting training...")
         # primary_metric = 'loss'
         primary_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
-        if primary_metric == 'accuracy':
+        if primary_metric == 'accuracy' or primary_metric == 'roc_auc':
             best_val_metric = 0
         else:
             best_val_metric = 1000000
