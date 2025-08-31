@@ -4,7 +4,8 @@
 CONFIGS=(
   "config/config_hiv_scaffold.yaml"
   "config/config_hiv_size.yaml"
-  "config/config_hiv_twitter.yaml"
+  "config/config_twitter.yaml"
+  "config/config_sst2.yaml"
 )
 
 # Run each config sequentially

@@ -71,7 +71,7 @@ logging:
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.5
+  entmax_alpha: 1.38
   depth: 3
   hidden_dim: 64
   train_after: 10

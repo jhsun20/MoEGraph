@@ -51,7 +51,7 @@ model:
 
 # Training configuration
 training:
-  epochs: 100 # BEST 10
+  epochs: 50 # BEST 10
   lr: 0.001
   weight_decay: 0.0001
   early_stopping:
