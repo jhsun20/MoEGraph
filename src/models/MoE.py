@@ -336,7 +336,7 @@ class MoE(nn.Module):
             return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
         # ---- GOOD-HIV variants (as you already added) ----
-        tau_logitadj, gamma_focal, eps_smooth = 1.0, 2.0, 0.05
+        tau_logitadj, gamma_focal, eps_smooth = 0.6, 2.0, 0.05
 
         counts = torch.bincount(y, minlength=C).float().to(device)
         counts[counts == 0] = 1.0
@@ -359,9 +359,9 @@ class MoE(nn.Module):
             logits_la = logits + tau_logitadj * prior.log().view(1, -1)
             logp_la    = F.log_softmax(logits_la, dim=1)
             if label_smoothing:
-                ce_la   = -(q * logp_la).sum(dim=1)
+                ce_la   = -(q * logp_la).sum(dim=1) * 10
             else:
-                ce_la = F.cross_entropy(logits_la, y, reduction='none')
+                ce_la = F.cross_entropy(logits_la, y, reduction='none') * 10
 
             # 2) Pairwise AUC on a margin score (binary)
             #    Use a *margin* s = logit_pos - logit_neg so the pairwise diff works naturally.
