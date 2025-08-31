@@ -52,8 +52,8 @@ model:
 # Training configuration
 training:
   epochs: 20
-  lr: 0.001
-  weight_decay: 0.00001
+  lr: 0.00001
+  weight_decay: 0.0001
   early_stopping:
     patience: 20
     min_delta: 0.0001
@@ -70,7 +70,7 @@ logging:
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.38
+  entmax_alpha: 1.5
   model: "GIN"
   depth: 2
   hidden_dim: 64
