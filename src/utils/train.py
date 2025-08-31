@@ -798,7 +798,7 @@ def train(config, trial=None):
             torch.cuda.empty_cache()
 
             # Load the best model checkpoint before final evaluation
-            logger.logger.info("Loading best model checkpoint for final evaluation...")
+            # logger.logger.info("Loading best model checkpoint for final evaluation...")
             # logger.load_best_model(model)
             # ---- Gate-only fine-tuning from best checkpoint ----
             try:
@@ -816,8 +816,8 @@ def train(config, trial=None):
                 test_id_metrics = evaluate(model, id_test_loader, device, metric_type)
             
             # Log test metrics with the best epoch
-            logger.log_metrics(test_ood_metrics, best_epoch, phase="test_ood")
-            logger.log_metrics(test_id_metrics, best_epoch, phase="test_id")
+            logger.log_metrics(test_ood_metrics, epoch, phase="test_ood")
+            logger.log_metrics(test_id_metrics, epoch, phase="test_id")
 
             # if (config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil'):
             #     logger.log_metrics({

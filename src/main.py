@@ -106,6 +106,7 @@ if __name__ == "__main__":
     parser.add_argument('--gate_depth', type=int, help='Gating model depth')
     parser.add_argument('--gate_hidden_dim', type=int, help='Gating model hidden dimension')
     parser.add_argument('--train_after', type=int, help='Train gating model after specified epochs')
+    parser.add_argument('--finetune_epochs', type=int, help='Finetune gating model for specified epochs')
 
     args = parser.parse_args()
     
@@ -225,6 +226,8 @@ if __name__ == "__main__":
         config['gate']['hidden_dim'] = args.gate_hidden_dim
     if args.train_after:
         config['gate']['train_after'] = args.train_after
-    
+    if args.finetune_epochs:
+        config['gate']['finetune_epochs'] = args.finetune_epochs
+        
     # Run training
     run(config) 
