@@ -33,7 +33,7 @@ model:
   hidden_dim: 300
   num_layers: 3
   dropout: 0.5
-  global_pooling: "mean"  # Options: mean, sum, max
+  global_pooling: "sum"  # Options: mean, sum, max
   weight_str: 0.0 # best 0.1
   weight_la: 0.0 # best 0.1
   weight_ea: 0.0 # best 0.1
@@ -51,7 +51,7 @@ model:
 
 # Training configuration
 training:
-  epochs: 30
+  epochs: 10
   lr: 0.001
   weight_decay: 0.0001
   early_stopping:
