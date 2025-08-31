@@ -51,7 +51,7 @@ model:
 
 # Training configuration
 training:
-  epochs: 20
+  epochs: 15
   lr: 0.00001
   weight_decay: 0.0001
   early_stopping:
@@ -70,7 +70,7 @@ logging:
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.5
+  entmax_alpha: 1.38
   model: "GIN"
   depth: 2
   hidden_dim: 64
