@@ -23,7 +23,7 @@ dataset:
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 32
-  num_workers: 6
+  num_workers: 4
   domain: 'basis' # basis or size
 
 # Model configuration
@@ -39,8 +39,8 @@ model:
   weight_ea: 0.0
   weight_reg: 1.0
   weight_ce: 1.0
-  weight_div: 0.2
-  weight_load: 0.2
+  weight_div: 1.0
+  weight_load: 0.5
   num_experts: 4
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
   adv_warmup_epochs: 30
@@ -52,12 +52,12 @@ model:
 
 # Training configuration
 training:
-  epochs: 20
+  epochs: 100 # BEST 20
   lr: 0.001
   weight_decay: 0.0001
   early_stopping:
     patience: 20
-    min_delta: 0.0005
+    min_delta: 0.001
 
 # Logging configuration
 logging:
@@ -71,7 +71,8 @@ logging:
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.38
+  entmax_alpha: 1.5
   depth: 3
   hidden_dim: 64
   train_after: 10
+  finetune_epochs: 5

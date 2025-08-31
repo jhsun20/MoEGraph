@@ -9,7 +9,7 @@ experiment:
     num_samples: 512
     epochs: 50
     verbose: false
-  seeds: [1, 2]  # Add more seeds as needed
+  seeds: [1, 2, 3, 4, 5]  # Add more seeds as needed
   hyper_search:
     enable: false
     n_trials_1: 10
@@ -32,7 +32,7 @@ model:
   hidden_dim: 300
   num_layers: 3
   dropout: 0.5
-  global_pooling: "sum"  # Options: mean, sum, max
+  global_pooling: "mean"  # Options: mean, sum, max
   weight_str: 0.0 # best 0.01
   weight_la: 0.0 # best 0.1
   weight_ea: 0.0 # best 0.1
@@ -70,9 +70,9 @@ logging:
 # Gating module configuration
 gate:
   activation: "entmax"
-  entmax_alpha: 1.38
+  entmax_alpha: 1.5
   model: "GIN"
   depth: 2
   hidden_dim: 64
-  train_after: 2
+  train_after: 10
   finetune_epochs: 5
