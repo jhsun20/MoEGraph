@@ -787,6 +787,8 @@ def train(config, trial=None):
         
         else:
             # Final evaluation on test sets
+            logger.save_model(model, epoch, val_metrics)
+            best_val_metric = current_metric
             logger.logger.info("Evaluating on test sets...")
             print("Evaluating on test sets...")
             del optimizer
