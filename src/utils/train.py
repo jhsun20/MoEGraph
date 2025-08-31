@@ -799,7 +799,7 @@ def train(config, trial=None):
 
             # Load the best model checkpoint before final evaluation
             logger.logger.info("Loading best model checkpoint for final evaluation...")
-            logger.load_best_model(model)
+            # logger.load_best_model(model)
             # ---- Gate-only fine-tuning from best checkpoint ----
             try:
                 #finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config, logger, best_val_metric)
@@ -807,7 +807,7 @@ def train(config, trial=None):
             except Exception as e:
                 print(f"[WARN] Gate-only fine-tune skipped due to error: {e}")
 
-            logger.load_best_model(model)
+            # logger.load_best_model(model)
             if config['model']['type'] == 'moe':
                 test_ood_metrics = evaluate_moe(model, test_loader, device, metric_type, epoch, config)
                 test_id_metrics = evaluate_moe(model, id_test_loader, device, metric_type, epoch, config)
