@@ -22,7 +22,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 32
+  batch_size: 128
   num_workers: 4
   domain: 'basis' # basis or size
 
@@ -53,7 +53,7 @@ model:
 # Training configuration
 training:
   epochs: 20 # BEST 20 or 90?
-  lr: 0.001
+  lr: 0.0001 # BEST 0.001
   weight_decay: 0.0001
   early_stopping:
     patience: 20
