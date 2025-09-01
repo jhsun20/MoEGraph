@@ -326,7 +326,7 @@ class MoE(nn.Module):
 
         if self.dataset_name != "OODHIV":
             for k in range(K):
-                if self.metric == "Accuracy":
+                if self.metric == "Accuracy" or self.metric == "ROC-AUC":
                     ce_bk[:, k] = F.cross_entropy(stacked_logits[k], y, reduction='none')
                 else:
                     pred = stacked_logits[k].squeeze(-1).float()
