@@ -324,7 +324,7 @@ class MoE(nn.Module):
         y = targets.view(-1).long().to(device)
         ce_bk = stacked_logits[0, :, 0].new_zeros(B, K)  # will hold (B,K)
 
-        if self.dataset_name != "OODHIV":
+        if self.dataset_name != "GOODHIV":
             for k in range(K):
                 if self.metric == "Accuracy" or self.metric == "ROC-AUC":
                     ce_bk[:, k] = F.cross_entropy(stacked_logits[k], y, reduction='none')
