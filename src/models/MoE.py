@@ -336,7 +336,7 @@ class MoE(nn.Module):
             return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
         # ---- GOOD-HIV variants (as you already added) ----
-        tau_logitadj, gamma_focal, eps_smooth = 0.6, 2.0, 0.05
+        tau_logitadj, gamma_focal, eps_smooth = 0.8, 2.0, 0.05
 
         counts = torch.bincount(y, minlength=C).float().to(device)
         counts[counts == 0] = 1.0
