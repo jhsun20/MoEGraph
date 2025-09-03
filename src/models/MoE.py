@@ -359,9 +359,9 @@ class MoE(nn.Module):
             logits_la = logits + tau_logitadj * prior.log().view(1, -1)
             logp_la    = F.log_softmax(logits_la, dim=1)
             if label_smoothing:
-                ce_la   = -(q * logp_la).sum(dim=1) * 10
+                ce_la   = -(q * logp_la).sum(dim=1)
             else:
-                ce_la = F.cross_entropy(logits_la, y, reduction='none') * 10
+                ce_la = F.cross_entropy(logits_la, y, reduction='none')
 
             # 2) Pairwise AUC on a margin score (binary)
             #    Use a *margin* s = logit_pos - logit_neg so the pairwise diff works naturally.
