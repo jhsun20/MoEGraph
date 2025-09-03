@@ -366,14 +366,14 @@ class MoE(nn.Module):
             # 2) Pairwise AUC on a margin score (binary)
             #    Use a *margin* s = logit_pos - logit_neg so the pairwise diff works naturally.
             #    (No detach: we WANT gradients to flow to expert logits.)
-            margin_scores = logits[:, 1] - logits[:, 0]          # (B,)
-            auc_loss_k = self._auc_pairwise_ranknet_binary(
-                scores=margin_scores, labels=y, topk_neg=topk_neg_auc
-            )                                                    # scalar
+            # margin_scores = logits[:, 1] - logits[:, 0]          # (B,)
+            # auc_loss_k = self._auc_pairwise_ranknet_binary(
+            #     scores=margin_scores, labels=y, topk_neg=topk_neg_auc
+            # )                                                    # scalar
 
             # 3) Sum CE (per-sample) + weighted AUC (scalar) → broadcast add
             # print(ce_la, auc_loss_k)
-            ce_all = ce_la + auc_weight * auc_loss_k
+            ce_all = ce_la # + auc_weight * auc_loss_k
             ce_bk[:, k] = ce_all
 
         return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()

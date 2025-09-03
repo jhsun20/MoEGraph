@@ -92,7 +92,7 @@ def load_dataset(config):
     num_workers = dataset_config.get('num_workers', 0)
 
     # --- TRAIN LOADER ---
-    if dataset_name == 'OODHIV':
+    if dataset_name == 'GOODHIV':
         # Build per-sample weights: inverse class frequency
         labels_train = torch.tensor([int(d.y.item()) for d in datasets['train']], dtype=torch.long)
         class_counts = torch.bincount(labels_train, minlength=2).float().clamp_min(1.0)
