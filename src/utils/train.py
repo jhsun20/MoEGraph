@@ -798,8 +798,8 @@ def train(config, trial=None):
             torch.cuda.empty_cache()
 
             # Load the best model checkpoint before final evaluation
-            # logger.logger.info("Loading best model checkpoint for final evaluation...")
-            # logger.load_best_model(model)
+            logger.logger.info("Loading best model checkpoint for final evaluation...")
+            logger.load_best_model(model)
             # ---- Gate-only fine-tuning from best checkpoint ----
             try:
                 #finetune_gate_only(model, train_loader, val_loader, id_val_loader, dataset_info, device, config, logger, best_val_metric)

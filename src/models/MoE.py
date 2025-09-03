@@ -346,7 +346,7 @@ class MoE(nn.Module):
         auc_weight = float(getattr(self, "weight_auc", 0.0))
         topk_neg_auc = int(getattr(self, "topk_neg_auc", 32))
 
-        label_smoothing = True
+        label_smoothing = False
         for k in range(K):
             logits = stacked_logits[k]
 
