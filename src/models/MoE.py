@@ -336,7 +336,7 @@ class MoE(nn.Module):
             return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
         # ---- GOOD-HIV variants (as you already added) ----
-        tau_logitadj, gamma_focal, eps_smooth = 0.65, 2.0, 0.05
+        tau_logitadj, gamma_focal, eps_smooth = 1.0, 2.0, 0.05
 
         counts = torch.bincount(y, minlength=C).float().to(device)
         counts[counts == 0] = 1.0
@@ -346,7 +346,7 @@ class MoE(nn.Module):
         auc_weight = float(getattr(self, "weight_auc", 0.0))
         topk_neg_auc = int(getattr(self, "topk_neg_auc", 32))
 
-        label_smoothing = True
+        label_smoothing = False
         for k in range(K):
             logits = stacked_logits[k]
 
