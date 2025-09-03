@@ -22,7 +22,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 256
+  batch_size: 512
   num_workers: 4
   domain: 'size' # scaffold or size
 
