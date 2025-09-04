@@ -2,9 +2,9 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
+  "config/config_twitter.yaml"
   "config/config_motif_size.yaml"
   "config/config_motif_basis.yaml"
-  "config/config_sst2.yaml"
 )
 
 # Run each config sequentially
