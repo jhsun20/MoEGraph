@@ -22,7 +22,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 256
+  batch_size: 512
   num_workers: 4
   domain: 'scaffold' # scaffold or size
 
@@ -47,7 +47,7 @@ model:
   adv_ramp_epochs: 20
   strinv_warmup_epochs: 1
   strinv_ramp_epochs: 1
-  rho_edge: 0.9
+  rho_edge: 0.75
 
 
 # Training configuration
