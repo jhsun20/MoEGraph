@@ -2,7 +2,7 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-  "config/config_hiv_basis.yaml"
+  "config/config_hiv_scaffold.yaml"
   "config/config_hiv_size.yaml"
 )
 
