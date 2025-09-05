@@ -89,10 +89,10 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, help='Number of training epochs')
     parser.add_argument('--lr', type=float, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, help='Weight decay for optimizer')
-    parser.add_argument('--early_stopping_patience', type=int, help='Early stopping patience')
+    parser.add_argument('--patience', type=int, help='Early stopping patience')
     parser.add_argument('--early_stopping_min_delta', type=float, help='Minimum delta for early stopping')
 
-    # Logging arguments
+    # Logging arguments for early stopping
     parser.add_argument('--wandb_enable', type=str, help='Enable Weights & Biases logging (true/false)')
     parser.add_argument('--wandb_project', type=str, help='Weights & Biases project name')
     parser.add_argument('--wandb_entity', type=str, help='Weights & Biases entity name')
@@ -198,8 +198,8 @@ if __name__ == "__main__":
         config['training']['lr'] = args.lr
     if args.weight_decay:
         config['training']['weight_decay'] = args.weight_decay
-    if args.early_stopping_patience:
-        config['training']['early_stopping']['patience'] = args.early_stopping_patience
+    if args.patience:
+        config['training']['early_stopping']['patience'] = args.patience
     if args.early_stopping_min_delta:
         config['training']['early_stopping']['min_delta'] = args.early_stopping_min_delta
 
@@ -228,6 +228,6 @@ if __name__ == "__main__":
         config['gate']['train_after'] = args.train_after
     if args.finetune_epochs:
         config['gate']['finetune_epochs'] = args.finetune_epochs
-        
+
     # Run training
     run(config) 
