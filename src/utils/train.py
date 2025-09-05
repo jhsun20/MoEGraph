@@ -670,7 +670,8 @@ def train(config, trial=None):
                 {"params": experts_params, "lr": config['training']['lr'], "weight_decay": config['training']['weight_decay'], "name": "experts"},
                 {"params": gate_params,    "lr": config['training']['lr']*0.1, "weight_decay": config['training']['weight_decay'], "name": "gate"},
             ])
-
+            lr_decay_factor = 0.5   # multiply LR by this when patience triggers
+            lr_min = 1e-5           # clamp floor; do not decay below this
 
         
         # Training loop
@@ -683,6 +684,7 @@ def train(config, trial=None):
         else:
             best_val_metric = 1000000
         patience_counter = 0
+        patience = config['training']['early_stopping']['patience']
         best_epoch = 0  # Track the best epoch
         
         # Adjust epochs if in debug mode
@@ -771,12 +773,23 @@ def train(config, trial=None):
                 logger.save_model(model, epoch, val_metrics)
                 if not is_tuning:
                     logger.logger.info(f"New best model saved with {primary_metric}: {best_val_metric:.4f} and primary metric {eval_metric}: {current_eval_metric:.4f}")
-            # else:
-            #     patience_counter += 1
-            #     if patience_counter >= config['training']['early_stopping']['patience']:
-            #         if not is_tuning:
-            #             logger.logger.info(f"Early stopping at epoch {epoch}")
-            #         break
+            else:
+                # ---- PATIENCE-BASED LR DECAY (no early stop, no cooldown) ----
+                patience_counter += 1
+                if patience_counter >= patience:
+                    # Decay every param group uniformly; clamp to lr_min
+                    for i, pg in enumerate(optimizer.param_groups):
+                        old_lr = float(pg.get('lr', 0.0))
+                        new_lr = max(old_lr * lr_decay_factor, lr_min)
+                        if new_lr < old_lr:
+                            pg['lr'] = new_lr
+                            if not is_tuning:
+                                name = pg.get('name', f'group_{i}')
+                                logger.logger.info(
+                                    f"LR decay @ epoch {epoch}: {name} {old_lr:.6g} -> {new_lr:.6g}"
+                                )
+                    # Reset patience after a decay so we wait for next window
+                    patience_counter = 0
         
         if is_tuning:
             del optimizer
