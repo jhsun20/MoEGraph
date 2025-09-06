@@ -386,6 +386,8 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     acc_node_keep_pg_sum = None; acc_node_pg_count = 0
     acc_edge_keep_pg_sum = None; acc_edge_pg_count = 0
     # ----------------------------------------------------------------
+    # ------- NEW: per-expert logit accumulators (filled after 1st batch) -------
+    per_expert_logits_accum = None  # list of length K; each item list of tensors
 
     pbar = tqdm(loader, desc='Evaluating MoEUIL', leave=False)
     for data in pbar:
@@ -400,6 +402,16 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         gate_weight_accumulator.append(gate_weights.cpu())
 
         expert_logits = aggregated_outputs['expert_logits']  # (B, K, C)
+        
+        # ------- NEW: initialize per-expert accumulators after we know K -------
+        if per_expert_logits_accum is None:
+            _, K, _ = expert_logits.size()
+            per_expert_logits_accum = [[] for _ in range(K)]
+        # Accumulate each expert’s logits for this batch
+        for k in range(len(per_expert_logits_accum)):
+            per_expert_logits_accum[k].append(expert_logits[:, k, :].detach())
+        # -----------------------------------------------------------------------
+
         # --- Majority vote across experts (unweighted) ---
         # Each expert votes for argmax class; count votes per class.
         B, K, C = expert_logits.size()
@@ -510,35 +522,50 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     metrics = compute_metrics(final_outputs, final_targets, metric_type)
 
     # --- Majority vote accuracy ---
-    mv_counts_all = torch.cat(all_mv_counts, dim=0)  # (N, C)
-    mv_metrics = compute_metrics(mv_counts_all, final_targets, metric_type)
-    print("Majority-vote metrics:", {f"mv_{k}": v for k, v in mv_metrics.items()})
-    for k, v in mv_metrics.items():
-        metrics[f"mv_{k}"] = v
+    # mv_counts_all = torch.cat(all_mv_counts, dim=0)  # (N, C)
+    # mv_metrics = compute_metrics(mv_counts_all, final_targets, metric_type)
+    # print("Majority-vote metrics:", {f"mv_{k}": v for k, v in mv_metrics.items()})
+    # for k, v in mv_metrics.items():
+    #     metrics[f"mv_{k}"] = v
 
     # --- Top-1 / Top-2 metrics
-    if len(all_top1_logits) > 0:
-        top1_all = torch.cat(all_top1_logits, dim=0)  # (N, C)
-        top1_metrics = compute_metrics(top1_all, final_targets, metric_type)
-        print("Top-1-expert metrics:", {f"top1_{k}": v for k, v in top1_metrics.items()})
-        for k, v in top1_metrics.items():
-            metrics[f"top1_{k}"] = v
+    # if len(all_top1_logits) > 0:
+    #     top1_all = torch.cat(all_top1_logits, dim=0)  # (N, C)
+    #     top1_metrics = compute_metrics(top1_all, final_targets, metric_type)
+    #     print("Top-1-expert metrics:", {f"top1_{k}": v for k, v in top1_metrics.items()})
+    #     for k, v in top1_metrics.items():
+    #         metrics[f"top1_{k}"] = v
 
     # Only if at least 2 experts exist
-    if K >= 2 and len(all_top2u_logits) > 0 and len(all_top2w_logits) > 0:
-        top2u_all = torch.cat(all_top2u_logits, dim=0)
-        top2w_all = torch.cat(all_top2w_logits, dim=0)
+    # if K >= 2 and len(all_top2u_logits) > 0 and len(all_top2w_logits) > 0:
+    #     top2u_all = torch.cat(all_top2u_logits, dim=0)
+    #     top2w_all = torch.cat(all_top2w_logits, dim=0)
 
-        top2u_metrics = compute_metrics(top2u_all, final_targets, metric_type)
-        top2w_metrics = compute_metrics(top2w_all, final_targets, metric_type)
+    #     top2u_metrics = compute_metrics(top2u_all, final_targets, metric_type)
+    #     top2w_metrics = compute_metrics(top2w_all, final_targets, metric_type)
 
-        print("Top-2 (unweighted) metrics:", {f"top2u_{k}": v for k, v in top2u_metrics.items()})
-        print("Top-2 (gate-weighted) metrics:", {f"top2w_{k}": v for k, v in top2w_metrics.items()})
+    #     print("Top-2 (unweighted) metrics:", {f"top2u_{k}": v for k, v in top2u_metrics.items()})
+    #     print("Top-2 (gate-weighted) metrics:", {f"top2w_{k}": v for k, v in top2w_metrics.items()})
 
-        for k, v in top2u_metrics.items():
-            metrics[f"top2u_{k}"] = v
-        for k, v in top2w_metrics.items():
-            metrics[f"top2w_{k}"] = v
+    #     for k, v in top2u_metrics.items():
+    #         metrics[f"top2u_{k}"] = v
+    #     for k, v in top2w_metrics.items():
+    #         metrics[f"top2w_{k}"] = v
+
+    # ------- NEW: Per-expert metrics over the full epoch -------
+    # Concatenate per-expert logits and compute metrics against final_targets
+    # if per_expert_logits_accum is not None:
+    #     print("\nPer-expert metrics:")
+    #     for k in range(K):
+    #         k_all = torch.cat(per_expert_logits_accum[k], dim=0)  # (N, C) or (N, 1)
+    #         k_metrics = compute_metrics(k_all, final_targets, metric_type)
+    #         # Pretty print a compact line; keep primary metric first if present
+    #         primary = k_metrics[metric_type.lower().replace('-', '_')]
+    #         print(f"  Expert {k}:" +
+    #               " ".join([f"{kk}={vv:.4f}" for kk, vv in list(k_metrics.items())[1:]]))
+    #         # Flatten into overall metrics dict with 'expert{k}_' prefix
+    #         for kk, vv in k_metrics.items():
+    #             metrics[f"expert{k}_{kk}"] = vv
 
     metrics['loss'] = total_loss / len(loader.dataset)
     metrics['loss_ce'] = total_ce_loss / len(loader.dataset)
