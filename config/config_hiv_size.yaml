@@ -22,7 +22,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 512
+  batch_size: 256
   num_workers: 4
   domain: 'size' # scaffold or size
 
@@ -52,11 +52,11 @@ model:
 
 # Training configuration
 training:
-  epochs: 50
+  epochs: 70
   lr: 0.001
   weight_decay: 0.0001
   early_stopping:
-    patience: 40
+    patience: 10
     min_delta: 0.001
 
 # Logging configuration
