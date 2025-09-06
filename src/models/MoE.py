@@ -412,7 +412,7 @@ class MoE(nn.Module):
         L_top1 = torch.sum(uniform * (log_u - counts.log()))
 
         # Final: reverse-KL balance + entropy penalty + (small) winner-spread
-        return L_bal + 0 * H_rows + 0 * L_top1
+        return L_bal + lam * H_rows + 0.2 * L_top1
     
     
     @staticmethod
