@@ -71,7 +71,7 @@ def compute_metrics(outputs, targets, metric_type='Accuracy', threshold=0.5):
                 probs = softmax(outputs, axis=1)[:, 1]  # prob of positive class
         #print("probs", probs, probs.shape)
         #print("targets", targets, targets.shape)
-        metrics['roc_auc'] = float(roc_auc_score(targets, probs, multi_class='ovr'))
+        metrics['roc_auc'] = float(roc_auc_score(targets, probs, multi_class='ovo'))
 
         # Also compute accuracy
         preds = np.argmax(outputs, axis=1) if outputs.shape[1] > 1 else (outputs > 0.5).astype(int)
