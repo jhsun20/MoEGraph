@@ -5,6 +5,7 @@ import numpy as np
 import os.path as osp
 import os
 import random
+import networkx as nx
 import warnings
 from torch_geometric.datasets import *
 from torch.utils.data import WeightedRandomSampler
@@ -161,6 +162,23 @@ def load_dataset(config):
         'metric': datasets['metric'],
         'num_envs': meta_info.num_envs
     }
+
+    # if dataset_name == 'GOODMotif':
+    #     # for the first five graphs in the test set 
+    #     # print the original graph visually 
+    #     import matplotlib.pyplot as plt
+    #     import networkx as nx
+    #     from torch_geometric.utils import to_networkx
+
+    #     for i in range(11, 12):
+    #         data = datasets['test'][i]
+    #         G = to_networkx(data, to_undirected=True)
+    #         plt.figure(figsize=(8, 6))
+    #         nx.draw(G, with_labels=True, node_size=500, node_color='lightblue', font_size=10, font_color='black')
+    #         plt.title(f"Graph {i+1} from Test Set")
+    #         plt.show()
+    #     [32][s]
+
     
     # Improve print statements for better readability
     if not is_tuning:
