@@ -37,7 +37,7 @@ model:
   weight_str: 0.0
   weight_la: 0.0
   weight_ea: 0.0
-  weight_reg: 1.0
+  weight_reg: 5.0
   weight_ce: 1.0
   weight_div: 0.1
   weight_load: 0.1
