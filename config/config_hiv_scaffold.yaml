@@ -37,7 +37,7 @@ model:
   weight_str: 0.0
   weight_la: 0.0
   weight_ea: 0.0
-  weight_reg: 1.0
+  weight_reg: 5.0
   weight_ce: 1.0
   weight_div: 1.0
   weight_load: 0.5
@@ -47,16 +47,15 @@ model:
   adv_ramp_epochs: 20
   strinv_warmup_epochs: 1
   strinv_ramp_epochs: 1
-  rho_edge: 0.9
-
+  rho_edge: 0.5
 
 # Training configuration
 training:
   epochs: 100
-  lr: 0.001
+  lr: 0.005
   weight_decay: 0.0001
   early_stopping:
-    patience: 20
+    patience: 10
     min_delta: 0.001
 
 # Logging configuration
