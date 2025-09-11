@@ -47,6 +47,7 @@ class Experts(nn.Module):
         self.dataset_name = (config.get('dataset').get('dataset_name')).lower()
         self.metric = dataset_info['metric']
         self.is_mol = self.dataset_name in {"goodhiv", "molhiv", "ogbg-molhiv"}
+        self.vgin = self.dataset_name not in {"goodmotif"}
         self.atom_field_cardinalities = None
         self.bond_field_cardinalities = None
         if self.is_mol:
@@ -111,7 +112,7 @@ class Experts(nn.Module):
         # ---------- Encoders / Heads ----------
         # Causal/selector encoder to get node embeddings Z for masks
         self.causal_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling='none', dataset_name=self.dataset_name, atom_field_cardinalities=self.atom_field_cardinalities, bond_field_cardinalities=self.bond_field_cardinalities
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling='none', dataset_name=self.dataset_name, atom_field_cardinalities=self.atom_field_cardinalities, bond_field_cardinalities=self.bond_field_cardinalities, vgin=self.vgin
         )
 
         # Per-expert maskers
@@ -136,7 +137,7 @@ class Experts(nn.Module):
         # Classifier encoder (masked pass)
         self.classifier_encoders = nn.ModuleList([
             GINEncoderWithEdgeWeight(
-                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling, dataset_name=self.dataset_name, atom_field_cardinalities=self.atom_field_cardinalities, bond_field_cardinalities=self.bond_field_cardinalities)
+                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling, dataset_name=self.dataset_name, atom_field_cardinalities=self.atom_field_cardinalities, bond_field_cardinalities=self.bond_field_cardinalities, vgin=self.vgin)
         for _ in range(self.num_experts)
         ])
 
