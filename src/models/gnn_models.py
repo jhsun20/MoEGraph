@@ -5,7 +5,55 @@ from torch_geometric.nn import GCNConv, GINConv, SAGEConv, global_mean_pool, glo
 from torch_geometric.utils import add_self_loops, remove_self_loops, softmax, coalesce, add_remaining_self_loops
 from torch_geometric.nn.norm import LayerNorm  # <-- use PyG LayerNorm (node-wise)
 
+# --- NEW: light-weight atom/bond embedders (multi-field categorical -> dense) ---
+class SimpleAtomEncoder(nn.Module):
+    def __init__(self, emb_dim, field_cardinalities):
+        super().__init__()
+        self.embs = nn.ModuleList([nn.Embedding(C, emb_dim) for C in field_cardinalities])
+        for emb in self.embs:
+            nn.init.xavier_uniform_(emb.weight.data)
 
+    def forward(self, x_cat):  # x_cat: [N, F_cat] integer-coded fields
+        out = 0
+        for i in range(x_cat.size(1)):
+            out = out + self.embs[i](x_cat[:, i])
+        return out  # [N, emb_dim]
+
+class SimpleBondEncoder(nn.Module):
+    def __init__(self, emb_dim, field_cardinalities):
+        super().__init__()
+        self.embs = nn.ModuleList([nn.Embedding(C, emb_dim) for C in field_cardinalities])
+        for emb in self.embs:
+            nn.init.xavier_uniform_(emb.weight.data)
+
+    def forward(self, e_cat):  # e_cat: [E, F_cat] integer-coded bond fields
+        out = 0
+        for i in range(e_cat.size(1)):
+            out = out + self.embs[i](e_cat[:, i])
+        return out  # [E, emb_dim]
+
+# --- NEW: GINE-style conv that adds bond embeddings in the message ---
+class GINConvMol(MessagePassing):
+    def __init__(self, nn_module, bond_encoder, eps=0.0, train_eps=False):
+        super().__init__(aggr='add')
+        self.nn = nn_module
+        self.bond_encoder = bond_encoder
+        self.initial_eps = eps
+        self.eps = nn.Parameter(torch.tensor([eps])) if train_eps else eps
+        self.train_eps = train_eps
+
+    def forward(self, x, edge_index, edge_attr):
+        # NOTE: DO NOT add self-loops here; standard GINE doesn’t mix edge_attr with self-loops.
+        out = self.propagate(edge_index, x=x, edge_attr=edge_attr)
+        out = ((1 + self.eps) * x) + out
+        return self.nn(out)
+
+    def message(self, x_j, edge_attr):
+        # edge_attr are categorical fields; embed then add to neighbor features
+        e = self.bond_encoder(edge_attr)  # [E, hidden]
+        return (x_j + e).relu()
+
+        
 class GCN(nn.Module):
     """Graph Convolutional Network (GCN) model."""
     
@@ -196,39 +244,89 @@ class GINConvWithEdgeWeight(MessagePassing):
     def __repr__(self):
         return f'{self.__class__.__name__}(nn={self.nn})'
     
+# --- MOD: your encoder now accepts dataset_name and optional GOOD-style cardinalities
 class GINEncoderWithEdgeWeight(nn.Module):
-    def __init__(self, in_dim, hidden_dim, num_layers, dropout=0.5, train_eps=False, global_pooling='mean'):
+    def __init__(
+        self,
+        in_dim,
+        hidden_dim,
+        num_layers,
+        dropout=0.5,
+        train_eps=False,
+        global_pooling='mean',
+        dataset_name=None,
+        atom_field_cardinalities=None,  # e.g., [num_atom_type, num_degree, ...]
+        bond_field_cardinalities=None,  # e.g., [num_bond_type, num_stereo, ...]
+    ):
         super().__init__()
+        self.hidden_dim = hidden_dim
         self.convs = nn.ModuleList()
-        self.bns   = nn.ModuleList()   # keep attribute name to avoid touching caller code
+        self.bns   = nn.ModuleList()
         self.acts  = nn.ModuleList()
         self.global_pooling = global_pooling
+        self.dropout = float(dropout)
 
-        for i in range(num_layers):
-            input_dim = in_dim if i == 0 else hidden_dim
+        # decide path
+        self.use_mol = (dataset_name is not None) and (dataset_name.lower() in {
+            'goodhiv', 'molhiv', 'ogbg-molhiv'
+        })
+
+        if self.use_mol:
+            assert atom_field_cardinalities is not None and bond_field_cardinalities is not None, \
+                "For GOODHIV, provide atom_field_cardinalities and bond_field_cardinalities."
+            self.atom_encoder = SimpleAtomEncoder(hidden_dim, atom_field_cardinalities)
+            self.bond_encoder = SimpleBondEncoder(hidden_dim, bond_field_cardinalities)
+        else:
+            self.atom_encoder = None
+            self.bond_encoder = None
+
+        for layer in range(num_layers):
+            input_dim = (hidden_dim if self.use_mol else (in_dim if layer == 0 else hidden_dim))
             mlp = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
                 nn.ReLU(),
                 nn.Linear(hidden_dim, hidden_dim)
             )
-            conv = GINConvWithEdgeWeight(mlp, train_eps=train_eps)
+            if self.use_mol:
+                conv = GINConvMol(mlp, bond_encoder=self.bond_encoder, train_eps=train_eps)
+            else:
+                conv = GINConvWithEdgeWeight(mlp, train_eps=train_eps)
             self.convs.append(conv)
-
-            # >>> swapped BatchNorm for LayerNorm (node-wise) <<<
-            # PyG's LayerNorm normalizes per-node feature vector: shape (N, C)
-            # self.bns.append(LayerNorm(hidden_dim, affine=True, mode='node'))
             self.bns.append(BatchNorm(hidden_dim))
-
             self.acts.append(nn.ReLU())
 
-        self.dropout = float(dropout)
+    def forward(self, x, edge_index, edge_weight=None, batch=None,
+                node_weight=None, edge_attr=None):
+        if self.use_mol:
+            # 1) Get node embeddings
+            if x.dtype in (torch.int32, torch.int64):
+                # raw categorical -> embed
+                x = self.atom_encoder(x)  # [N, hidden_dim]
+            elif x.dtype in (torch.float32, torch.float64):
+                # if user passed already-embedded features, accept only if dims match
+                if x.size(-1) != self.hidden_dim:
+                    raise ValueError(
+                        f"[Mol path] Got float x with dim={x.size(-1)}; expected hidden_dim={self.hidden_dim}. "
+                        "Pass raw categorical x (Long) or pre-embed to hidden_dim."
+                    )
+                # else: treat as pre-embedded
+            else:
+                raise ValueError(f"[Mol path] Unsupported x dtype: {x.dtype}")
 
-    def forward(self, x, edge_index, edge_weight=None, batch=None, node_weight=None):
-        for conv, bn, act in zip(self.convs, self.bns, self.acts):
-            x = conv(x, edge_index, edge_weight)
-            x = bn(x)
-            x = act(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
+            # 2) Apply node mask AFTER embedding (if provided)
+            if node_weight is not None:
+                x = x * node_weight.view(-1, 1)
+
+            # 3) Mol conv stack (no self-loops here)
+            for conv, bn, act in zip(self.convs, self.bns, self.acts):
+                x = conv(x, edge_index, edge_attr=edge_attr)  # GINConvMol
+                x = bn(x); x = act(x); x = F.dropout(x, p=self.dropout, training=self.training)
+        else:
+            # Non-mol path unchanged (your edge_weight behavior)
+            for conv, bn, act in zip(self.convs, self.bns, self.acts):
+                x = conv(x, edge_index, edge_weight=edge_weight)
+                x = bn(x); x = act(x); x = F.dropout(x, p=self.dropout, training=self.training)
+        
         if self.global_pooling == 'mean':
             x = global_mean_pool(x, batch)
         elif self.global_pooling == 'sum':
@@ -237,7 +335,7 @@ class GINEncoderWithEdgeWeight(nn.Module):
             pass
         else:
             raise ValueError(f"Unsupported pooling type: {self.global_pooling}")
-        return x  # (N, hidden_dim)
+        return x
     
     
 class ExpertClassifier(nn.Module):

@@ -44,7 +44,14 @@ class Experts(nn.Module):
 
         self.num_features = dataset_info['num_features']
         self.num_classes  = dataset_info['num_classes']
+        self.dataset_name = (config.get('dataset').get('dataset_name')).lower()
         self.metric = dataset_info['metric']
+        self.is_mol = self.dataset_name in {"goodhiv", "molhiv", "ogbg-molhiv"}
+        self.atom_field_cardinalities = None
+        self.bond_field_cardinalities = None
+        if self.is_mol:
+            self.atom_field_cardinalities = [len(v) for v in x_map.values()]
+            self.bond_field_cardinalities = [len(v) for v in e_map.values()]
         if self.metric == "Accuracy" and self.num_classes == 1:
             self.num_classes = 2
 
@@ -104,7 +111,7 @@ class Experts(nn.Module):
         # ---------- Encoders / Heads ----------
         # Causal/selector encoder to get node embeddings Z for masks
         self.causal_encoder = GINEncoderWithEdgeWeight(
-            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling='none'
+            self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling='none', dataset_name=self.dataset_name, atom_field_cardinalities=self.atom_field_cardinalities, bond_field_cardinalities=self.bond_field_cardinalities
         )
 
         # Per-expert maskers
@@ -129,7 +136,7 @@ class Experts(nn.Module):
         # Classifier encoder (masked pass)
         self.classifier_encoders = nn.ModuleList([
             GINEncoderWithEdgeWeight(
-                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling)
+                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling, dataset_name=self.dataset_name, atom_field_cardinalities=self.atom_field_cardinalities, bond_field_cardinalities=self.bond_field_cardinalities)
         for _ in range(self.num_experts)
         ])
 
@@ -155,7 +162,7 @@ class Experts(nn.Module):
         self.num_envs = dataset_info['num_envs']
         self.env_classifier_encoders = nn.ModuleList([
             GINEncoderWithEdgeWeight(
-                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling)
+                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling) 
         for _ in range(self.num_experts)
         ])
 
@@ -262,7 +269,7 @@ class Experts(nn.Module):
         env_labels = getattr(data, "env_id", None)
 
         # Base embeddings used to produce masks
-        Z = self.causal_encoder(x, edge_index, batch=batch)
+        Z = self.causal_encoder(x, edge_index, batch=batch, edge_attr=getattr(data, "edge_attr", None))
         edge_feat = torch.cat([Z[edge_index[0]], Z[edge_index[1]]], dim=1)
 
         node_masks, edge_masks = [], []
@@ -300,8 +307,10 @@ class Experts(nn.Module):
             masked_x   = x * node_weight.view(-1, 1)           # zero-out nodes with no kept incident edges
             edge_weight = e_on                                  # (E,)
 
-            h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch)
-
+            if self.is_mol:
+                h_stable = self.classifier_encoders[k](x, edge_index, edge_weight=edge_weight, batch=batch, node_weight=node_weight, edge_attr=getattr(data, "edge_attr", None))
+            else:
+                h_stable = self.classifier_encoders[k](masked_x, edge_index, edge_weight=edge_weight, batch=batch, edge_attr=getattr(data, "edge_attr", None))
             # Classify with your existing per-expert classifier
             logit = self.expert_classifiers_causal[k](h_stable)
 
@@ -1208,3 +1217,54 @@ def _check_graph(x, edge_index, edge_weight=None, batch=None, where=""):
         assert edge_weight.size(0) == E, f"{where}: |edge_weight|={edge_weight.size(0)} != E={E}"
     if batch is not None:
         assert batch.size(0) == N, f"{where}: |batch|={batch.size(0)} != N={N}"
+
+
+x_map = {
+    'atomic_num':
+        list(range(0, 119)),
+    'chirality': [
+        'CHI_UNSPECIFIED',
+        'CHI_TETRAHEDRAL_CW',
+        'CHI_TETRAHEDRAL_CCW',
+        'CHI_OTHER',
+    ],
+    'degree':
+        list(range(0, 11)),
+    'formal_charge':
+        list(range(-5, 7)),
+    'num_hs':
+        list(range(0, 9)),
+    'num_radical_electrons':
+        list(range(0, 5)),
+    'hybridization': [
+        'UNSPECIFIED',
+        'S',
+        'SP',
+        'SP2',
+        'SP3',
+        'SP3D',
+        'SP3D2',
+        'OTHER',
+    ],
+    'is_aromatic': [False, True],
+    'is_in_ring': [False, True],
+    }
+
+e_map = {
+    'bond_type': [
+        'misc',
+        'SINGLE',
+        'DOUBLE',
+        'TRIPLE',
+        'AROMATIC',
+    ],
+    'stereo': [
+        'STEREONONE',
+        'STEREOZ',
+        'STEREOE',
+        'STEREOCIS',
+        'STEREOTRANS',
+        'STEREOANY',
+    ],
+    'is_conjugated': [False, True],
+}
