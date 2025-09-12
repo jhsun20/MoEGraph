@@ -47,7 +47,7 @@ class Experts(nn.Module):
         self.dataset_name = (config.get('dataset').get('dataset_name')).lower()
         self.metric = dataset_info['metric']
         self.is_mol = self.dataset_name in {"goodhiv", "molhiv", "ogbg-molhiv"}
-        self.vgin = self.dataset_name not in {"goodmotif"}
+        self.vgin = self.dataset_name not in {"goodmotif", "goodhiv"}
         self.atom_field_cardinalities = None
         self.bond_field_cardinalities = None
         if self.is_mol:
