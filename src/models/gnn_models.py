@@ -165,7 +165,7 @@ class GINEncoderWithEdgeWeight(nn.Module):
             x = bn(x); x = act(x); x = F.dropout(x, p=self.dropout, training=self.training)
 
             # update VN (except after last layer is also fine; classic vGIN updates each layer)
-            if self.vgin and li < len(self.convs):  # update every layer
+            if self.vgin and li < len(self.convs) - 1:  # update every layer
                 pooled = global_add_pool(x, batch) + v                  # [G,H]
                 v = self.virtual_mlp(pooled)                            # [G,H]
 
