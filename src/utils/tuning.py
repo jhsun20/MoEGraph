@@ -12,27 +12,9 @@ def objective(trial, config_base, phase):
 
     # --- Suggest hyperparameters by phase ---
     if phase == 1:
-        config['model']['num_experts'] = trial.suggest_int("num_experts", 2, 8)
-        config['model']['weight_str'] = trial.suggest_float("weight_str", 0.5, 1.0, log=True)
-        # config['model']['weight_str'] = 0.0
-        config['model']['weight_sem'] = trial.suggest_float("weight_sem", 0.5, 1.0, log=True)
-        # config['model']['weight_sem'] = 1.0
-        config['model']['weight_reg'] = trial.suggest_float("weight_reg", 0.5, 1.0, log=True)
-        config['model']['weight_ce'] = 1.0
-        if config['model']['weight_div'] == 0.0:
-            config['model']['weight_div'] = 0.0
-        else:
-            config['model']['weight_div'] = trial.suggest_float("weight_div", 0.01, 0.3, log=True)
-        config['model']['weight_load'] = trial.suggest_float("weight_load", 0.01, 0.3, log=True)
-
-    elif phase == 2:
-        config['training']['lr'] = trial.suggest_categorical("lr", [0.01, 0.001, 0.0001])
-        config['gate']['train_after'] = trial.suggest_categorical("warmup", [0, 10, 20])
-        if config['gate']['entmax_alpha'] < 1.1:
-            config['gate']['entmax_alpha'] = 1.01
-        else:
-            config['gate']['entmax_alpha'] = trial.suggest_float("entmax_alpha", 1.1, 1.5)
-
+        config['dataset']['batch_size'] = trial.suggest_categorical("batch_size", [256, 512])
+        config['training']['lr'] = trial.suggest_categorical("lr", [0.001, 0.0001, 0.00001])
+        config['model']['rho_edge'] = trial.suggest_float("rho_edge", 0.1, 0.9)
 
     # --- Modify config for tuning ---
     config['logging']['wandb']['name'] = f"tune-trial-{trial.number}"
@@ -78,12 +60,12 @@ def run_optuna_tuning(config, phase, output_dir):
 
 def recursive_update(cfg, updates):
     for k, v in updates.items():
-        if k in ["weight_str", "weight_sem", "weight_reg", "weight_ce", "weight_div", "weight_load", "num_experts"]:
+        if k in ["rho_edge"]:
             cfg.setdefault("model", {})[k] = v
         elif k in ["lr"]:
             cfg.setdefault("training", {})[k] = v
-        elif k in ["train_after", "entmax_alpha"]:
-            cfg.setdefault("gate", {})[k] = v
+        elif k in ["batch_size"]:
+            cfg.setdefault("dataset", {})[k] = v
         else:
             cfg[k] = v
     return cfg

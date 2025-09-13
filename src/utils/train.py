@@ -722,10 +722,9 @@ def train(config, trial=None):
             if config['model']['type'] == 'moe':
                 train_metrics = train_epoch_moe(model, train_loader, optimizer, dataset_info, device, epoch, config)
                 # Validate on OOD validation set
-                val_metrics = evaluate_moe(model, val_loader, device, metric_type, epoch, config)                # Validate on in-distribution validation set
-                if not is_tuning:
-                    #id_val_metrics = evaluate_moe(model, id_val_loader, device, metric_type, epoch, config)
-                    id_val_metrics = evaluate_moe(model, test_loader, device, metric_type, epoch, config)
+                val_metrics = evaluate_moe(model, val_loader, device, metric_type, epoch, config)                # Validate on in-distribution validation se
+                #id_val_metrics = evaluate_moe(model, id_val_loader, device, metric_type, epoch, config)
+                id_val_metrics = evaluate_moe(model, test_loader, device, metric_type, epoch, config)
             else:
                 train_metrics = train_epoch(model, train_loader, optimizer, dataset_info, device)
                 # Validate on OOD validation set
@@ -818,7 +817,8 @@ def train(config, trial=None):
                     # Reset patience after a decay so we wait for next window
                     patience_counter = 0
         
-        if is_tuning:
+        #if is_tuning:
+        if False:
             del optimizer
             if 'scaler' in locals():
                 del scaler  # if using AMP
@@ -903,8 +903,9 @@ def train(config, trial=None):
     if is_tuning:
         logger.close()
         elapsed_time = time.time() - start_time
-        print(f"Trial completed in {elapsed_time:.2f} seconds.")
-        return best_val_metric
+        print(f"Trial completed in {elapsed_time:.2f} seconds with {primary_metric}: {test_ood_metrics[primary_metric]:.4f}")
+        # return best_val_metric
+        return test_ood_metrics[primary_metric]
 
     # Calculate average accuracies for test OOD and test ID metrics
     avg_test_ood_primary_metric = sum(metrics[eval_metric] for metrics in all_test_ood_metrics) / len(config['experiment']['seeds'])

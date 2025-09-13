@@ -29,7 +29,7 @@ def run(config):
 
         os.makedirs(output_dir, exist_ok=True)
         best_config = run_optuna_tuning(config=config, phase=1, output_dir=output_dir)
-        best_config = run_optuna_tuning(config=best_config, phase=2, output_dir=output_dir)
+        # best_config = run_optuna_tuning(config=best_config, phase=2, output_dir=output_dir)
         if config.get('experiment', {}).get('hyper_search', {}).get('test_after', False):
             best_config['experiment']['hyper_search']['enable'] = False
             train(best_config)
