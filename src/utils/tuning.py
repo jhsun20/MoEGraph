@@ -12,7 +12,7 @@ def objective(trial, config_base, phase):
 
     # --- Suggest hyperparameters by phase ---
     if phase == 1:
-        config['dataset']['batch_size'] = trial.suggest_categorical("batch_size", [256, 512])
+        config['dataset']['batch_size'] = trial.suggest_categorical("batch_size", [32, 64, 128])
         config['training']['lr'] = trial.suggest_categorical("lr", [0.001, 0.0001, 0.00001])
         config['model']['rho_edge'] = trial.suggest_float("rho_edge", 0.2, 0.9)
 
