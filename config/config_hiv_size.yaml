@@ -47,13 +47,13 @@ model:
   adv_ramp_epochs: 20
   strinv_warmup_epochs: 1
   strinv_ramp_epochs: 1
-  rho_edge: 0.7
+  rho_edge: 0.7 # best without 0.8 with 0.7
 
 
 # Training configuration
 training:
   epochs: 50
-  lr: 0.0005
+  lr: 0.0005 # best without 0.0001 with 0.0005
   weight_decay: 0.0001
   early_stopping:
     patience: 10
