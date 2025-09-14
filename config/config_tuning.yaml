@@ -12,7 +12,7 @@ experiment:
   seeds: [1,2,3]  # Add more seeds as needed
   hyper_search:
     enable: true
-    n_trials_1: 10
+    n_trials_1: 12
     n_trials_2: 2
     test_after: false
 
