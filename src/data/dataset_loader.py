@@ -103,7 +103,7 @@ def load_dataset(config):
         sampler = WeightedRandomSampler(
             weights=weights,
             num_samples=len(labels_train),   # one "epoch"
-            replacement=False                 # allow re-sampling positives
+            replacement=True                 # allow re-sampling positives
         )
 
         train_loader = DataLoader(
