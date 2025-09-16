@@ -102,7 +102,7 @@ class GINEncoderWithEdgeWeight(nn.Module):
         self.convs, self.bns, self.acts = nn.ModuleList(), nn.ModuleList(), nn.ModuleList()
         self.global_pooling = global_pooling
         self.dropout = float(dropout)
-        self.vgin = bool(vgin)                                  # <-- NEW
+        self.vgin = False                               # <-- NEW
 
         # decide path (mol vs non-mol) ... (unchanged)
         self.use_mol = (dataset_name is not None) and (dataset_name.lower() in {'goodhiv','molhiv','ogbg-molhiv'})
