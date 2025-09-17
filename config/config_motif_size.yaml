@@ -47,7 +47,7 @@ model:
   adv_ramp_epochs: 30
   strinv_warmup_epochs: 5
   strinv_ramp_epochs: 5
-  rho_edge: 0.55
+  rho_edge: 0.7
 
 
 # Training configuration
@@ -75,4 +75,4 @@ gate:
   depth: 3
   hidden_dim: 64
   train_after: 10
-  finetune_epochs: 5
+  finetune_epochs: 0
