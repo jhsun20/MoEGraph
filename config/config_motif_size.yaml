@@ -21,7 +21,7 @@ dataset:
   dataset_name: "GOODMotif"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
-  shift_type: "covariate" # covariate, concept, no_shift
+  shift_type: "covariate" # covariate, concept, no_shift 
   batch_size: 64 # best 32 or 64
   num_workers: 4
   domain: 'size' # basis or size
@@ -47,7 +47,7 @@ model:
   adv_ramp_epochs: 30
   strinv_warmup_epochs: 5
   strinv_ramp_epochs: 5
-  rho_edge: 0.65
+  rho_edge: 0.55
 
 
 # Training configuration
@@ -56,7 +56,7 @@ training:
   lr: 0.001 # BEST 0.001
   weight_decay: 0.0001
   early_stopping:
-    patience: 20
+    patience: 10
     min_delta: 0.001
 
 # Logging configuration
@@ -72,8 +72,7 @@ logging:
 gate:
   activation: "entmax"
   entmax_alpha: 1.38
-  model: "GIN"
-  depth: 2
+  depth: 3
   hidden_dim: 64
   train_after: 10
   finetune_epochs: 5
