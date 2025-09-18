@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moe_hiv_size_tuning" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moe_cmnist_tuning" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -12,19 +12,19 @@ experiment:
   seeds: [1,2,3]  # Add more seeds as needed
   hyper_search:
     enable: true
-    n_trials_1: 12
+    n_trials_1: 20
     n_trials_2: 2
     test_after: false
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODHIV"  # Specific dataset from GOOD
+  dataset_name: "CMNIST"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 64
   num_workers: 4
-  domain: 'size' # scaffold or size
+  # domain: 'size' # scaffold or size
 
 # Model configuration
 model:
@@ -51,7 +51,7 @@ model:
 
 # Training configuration
 training:
-  epochs: 70
+  epochs: 50
   lr: 0.0005
   weight_decay: 0.0001
   early_stopping:
