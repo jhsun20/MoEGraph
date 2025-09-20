@@ -22,7 +22,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
-  batch_size: 128
+  batch_size: 32
   num_workers: 6
 
 # Model configuration
@@ -47,13 +47,13 @@ model:
   adv_ramp_epochs: 30
   strinv_warmup_epochs: 5
   strinv_ramp_epochs: 5
-  rho_edge: 0.75
+  rho_edge: 0.56
 
 
 # Training configuration
 training:
   epochs: 200
-  lr: 0.001
+  lr: 0.0001
   weight_decay: 0.001
   early_stopping:
     patience: 10
