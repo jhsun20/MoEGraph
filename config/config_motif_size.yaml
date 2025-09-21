@@ -74,4 +74,4 @@ gate:
   depth: 3
   hidden_dim: 64
   train_after: 10
-  finetune_epochs: 0
+  finetune_epochs: 5
