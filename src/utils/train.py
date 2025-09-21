@@ -698,7 +698,7 @@ def train(config, trial=None):
         else:
             # Separate params
             experts_params = list(model.shared.parameters())                   # all experts (encoders, heads, masks, etc.)
-            gate_params    = list(model.gate_enc.parameters()) + list(model.gate_mlp.parameters())  # gate encoder + MLP
+            gate_params    = list(model._gate_mlp.parameters())  # gate encoder + MLP
             # Initialize optimizer
             # Build optimizer with param groups
             optimizer = torch.optim.Adam([
