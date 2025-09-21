@@ -123,7 +123,7 @@ class MoE(nn.Module):
         agg_logits = weighted.sum(dim=1)                              # (B, C)
 
         # CE aggregated per expert, per sample
-        ce = self._gate_weighted_ce(expert_logits.transpose(0, 1), targets, gate_probs.transpose(0, 1))
+        ce, gap_mean = self._gate_weighted_ce(expert_logits.transpose(0, 1), targets, gate_probs.transpose(0, 1), return_gaps=True)
 
         # ---- NEW: gate-weight per-sample LA/EA/STR if provided ----
         ps = shared_out.get('per_sample', None)  # dict of (B,K): 'ce','la','ea','str'
@@ -166,7 +166,8 @@ class MoE(nn.Module):
             'rho': shared_out['rho'],
             'expert_logits': expert_logits,         # (B, K, C)
             'node_masks': shared_out['node_masks'],
-            'edge_masks': shared_out['edge_masks']
+            'edge_masks': shared_out['edge_masks'],
+            'gap_mean': gap_mean
         }
 
     def _compute_gate_loss(self, shared_out, targets, gate_scores, eps: float = 1e-12):
@@ -312,7 +313,7 @@ class MoE(nn.Module):
         scores = self._gate_mlp(Phi).squeeze(-1)  # (B,K)
         return scores
     
-    def _gate_weighted_ce(self, stacked_logits, targets, gate_weights, return_matrix: bool = False):
+    def _gate_weighted_ce(self, stacked_logits, targets, gate_weights, return_matrix: bool = False, return_gaps: bool = False):
         """
         stacked_logits: (K, B, C)
         gate_weights:   (K, B)
@@ -333,6 +334,10 @@ class MoE(nn.Module):
                     target = y.float()
                     #print(pred.shape, target.shape)
                     ce_bk[:, k] = F.l1_loss(pred, target, reduction='none')
+            if return_gaps:
+                vals, _ = torch.topk(ce_bk, k=2, dim=1, largest=False)
+                gap_mean = (vals[:, 1] - vals[:, 0]).mean()  # scalar
+                return (gate_weights * ce_bk.T).sum(dim=0).mean(), gap_mean
             return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 
         # ---- GOOD-HIV variants (as you already added) ----
@@ -375,6 +380,12 @@ class MoE(nn.Module):
             # print(ce_la, auc_loss_k)
             ce_all = ce_la # + auc_weight * auc_loss_k
             ce_bk[:, k] = ce_all
+        
+            # ---- loss gap computation ----
+        if return_gaps:
+            vals, _ = torch.topk(ce_bk, k=2, dim=1, largest=False)
+            gap_mean = (vals[:, 1] - vals[:, 0]).mean()  # scalar
+            return (gate_weights * ce_bk.T).sum(dim=0).mean(), gap_mean
 
         return ce_bk if return_matrix else (gate_weights * ce_bk.T).sum(dim=0).mean()
 

@@ -370,6 +370,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     all_aggregated_outputs = []
     all_mv_counts = []  # majority-vote "logits" = per-class vote counts (with tiny tie-breaker)
     all_top1_logits, all_top2u_logits, all_top2w_logits = [], [], []
+    all_gap_means = []
 
     gate_weight_accumulator = []
 
@@ -402,7 +403,10 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         gate_weight_accumulator.append(gate_weights.cpu())
 
         expert_logits = aggregated_outputs['expert_logits']  # (B, K, C)
-        
+
+        gap_mean = aggregated_outputs['gap_mean']
+        all_gap_means.append(gap_mean.cpu())
+
         # ------- NEW: initialize per-expert accumulators after we know K -------
         if per_expert_logits_accum is None:
             _, K, _ = expert_logits.size()
@@ -553,6 +557,9 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
             metrics[f"top2w_{k}"] = v
 
     # ------- NEW: Per-expert metrics over the full epoch -------
+    gap_mean_avg = sum(all_gap_means) / len(loader.dataset)
+    gap_mean_std = torch.tensor(all_gap_means).std()
+    print(f"Gap Mean Average: {gap_mean_avg}, Gap Mean Std Dev: {gap_mean_std}")
     # Concatenate per-expert logits and compute metrics against final_targets
     if per_expert_logits_accum is not None:
         print("\nPer-expert metrics:")
@@ -576,6 +583,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     metrics['loss_div'] = total_div_loss / len(loader.dataset)
     metrics['loss_gate'] = total_gate_loss / len(loader.dataset)
     metrics['load_balance'] = load_balance.tolist()
+
 
     # ------- NEW: epoch-level drop rates -------
     if (acc_node_keep_sum is not None) and (acc_edge_keep_sum is not None):
