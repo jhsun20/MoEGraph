@@ -124,7 +124,8 @@ class MoE(nn.Module):
         agg_logits = weighted.sum(dim=1)                              # (B, C)
 
         # CE aggregated per expert, per sample
-        ce, gap_mean = self._gate_weighted_ce(expert_logits.transpose(0, 1), targets, gate_probs.transpose(0, 1), return_gaps=True)
+        ce = self._gate_weighted_ce(expert_logits.transpose(0, 1), targets, gate_probs.transpose(0, 1))
+        gap_mean = 0.0
 
         # ---- NEW: gate-weight per-sample LA/EA/STR if provided ----
         ps = shared_out.get('per_sample', None)  # dict of (B,K): 'ce','la','ea','str'
