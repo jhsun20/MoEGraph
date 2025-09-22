@@ -404,8 +404,8 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
 
         expert_logits = aggregated_outputs['expert_logits']  # (B, K, C)
 
-        gap_mean = aggregated_outputs['gap_mean']
-        all_gap_means.append(gap_mean.cpu())
+        # gap_mean = aggregated_outputs['gap_mean']
+        # all_gap_means.append(gap_mean.cpu())
 
         # ------- NEW: initialize per-expert accumulators after we know K -------
         if per_expert_logits_accum is None:
@@ -557,9 +557,9 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
             metrics[f"top2w_{k}"] = v
 
     # ------- NEW: Per-expert metrics over the full epoch -------
-    gap_mean_avg = sum(all_gap_means) / len(loader.dataset)
-    gap_mean_std = torch.tensor(all_gap_means).std()
-    print(f"Gap Mean Average: {gap_mean_avg}, Gap Mean Std Dev: {gap_mean_std}")
+    # gap_mean_avg = sum(all_gap_means) / len(loader.dataset)
+    # gap_mean_std = torch.tensor(all_gap_means).std()
+    # print(f"Gap Mean Average: {gap_mean_avg}, Gap Mean Std Dev: {gap_mean_std}")
     # Concatenate per-expert logits and compute metrics against final_targets
     if per_expert_logits_accum is not None:
         print("\nPer-expert metrics:")
