@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moe_twitter_tuning" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moe_motif_basis_tuning" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -18,13 +18,13 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODTwitter"  # Specific dataset from GOOD
+  dataset_name: "GOODMotif"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 64
   num_workers: 4
-  # domain: 'size' # scaffold or size
+  domain: 'basis' # scaffold or size
 
 # Model configuration
 model:
@@ -51,7 +51,7 @@ model:
 
 # Training configuration
 training:
-  epochs: 20
+  epochs: 25
   lr: 0.0005
   weight_decay: 0.0001
   early_stopping:
