@@ -33,7 +33,7 @@ model:
   hidden_dim: 300
   num_layers: 3
   dropout: 0.5
-  global_pooling: "mean"  # Options: mean, sum, max
+  global_pooling: "sum"  # Options: mean, sum, max
   weight_str: 0.0
   weight_la: 0.0
   weight_ea: 0.0
