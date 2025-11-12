@@ -686,8 +686,8 @@ def train(config, trial=None):
             model = DataParallel(model)
         model = model.to(device)
 
-
-
+        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Number of parameters: {num_params}")        
 
         if config['model']['type'] == 'uil' or config['model']['type'] == 'moe_uil':
             optimizer = torch.optim.Adam(
