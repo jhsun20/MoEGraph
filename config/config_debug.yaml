@@ -20,7 +20,7 @@ dataset:
   dataset_name: "GOODMotif2"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
-  shift_type: "covariate" # covariate, concept, no_shift
+  shift_type: "all" # covariate, concept, no_shift
   batch_size: 32
   num_workers: 4
   domain: "basis"

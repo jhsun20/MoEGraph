@@ -62,6 +62,8 @@ class GOODMotif2(InMemoryDataset):
             subset_pt += 10
         elif shift == 'PIIF':
             subset_pt += 15
+        elif shift == 'all':
+            subset_pt += 20
 
         if subset == 'train':
             subset_pt += 0
@@ -101,9 +103,10 @@ class GOODMotif2(InMemoryDataset):
         return ['covariate_train.pt', 'covariate_val.pt', 'covariate_test.pt', 'covariate_id_val.pt', 'covariate_id_test.pt',
                 'concept_train.pt', 'concept_val.pt', 'concept_test.pt', 'concept_id_val.pt', 'concept_id_test.pt',
                 'FIIF_train.pt', 'FIIF_val.pt', 'FIIF_test.pt', 'FIIF_id_val.pt', 'FIIF_id_test.pt',
-                'PIIF_train.pt', 'PIIF_val.pt', 'PIIF_test.pt', 'PIIF_id_val.pt', 'PIIF_id_test.pt']
+                'PIIF_train.pt', 'PIIF_val.pt', 'PIIF_test.pt', 'PIIF_id_val.pt', 'PIIF_id_test.pt',
+                'all_train.pt', 'all_val.pt', 'all_test.pt', 'all_id_val.pt', 'all_id_test.pt']
 
-    def gen_data(self, basis_id, width_basis, motif_id, y=None):
+    def gen_data(self, basis_id, width_basis, motif_id, y=None, shift=None):
         basis_type = self.all_basis[basis_id]
         if basis_type == 'tree':
             width_basis = int(math.log2(width_basis)) - 1
@@ -138,6 +141,8 @@ class GOODMotif2(InMemoryDataset):
         data.edge_gt = edge_gt
         data.basis_id = basis_id
         data.motif_id = motif_id
+        if shift is not None:
+            data.shift = shift
 
         # --- noisy labels ---
         if y is None:
@@ -149,6 +154,21 @@ class GOODMotif2(InMemoryDataset):
             data.y = y
 
         return data
+
+    def get_basis_all_list(self, num_data=60000):
+        per_shift = num_data // 3
+        cov_list = self.get_basis_covariate_list(num_data=per_shift)
+        FIIF_list = self.get_basis_FIIF_list(num_data=per_shift)
+        PIIF_list = self.get_basis_PIIF_list(num_data=per_shift)
+        all_env_list = []
+        # print(len(cov_list), len(FIIF_list), len(PIIF_list))
+        for i in range(len(cov_list)):
+            temp_list = cov_list[i] + FIIF_list[i] + PIIF_list[i]
+            # print(len(cov_list[i]), len(FIIF_list[i]), len(PIIF_list[i]))
+            random.shuffle(temp_list)
+            all_env_list.append(temp_list)
+        
+        return all_env_list
 
     def get_basis_covariate_list(self, num_data=60000):
         train_ratio = 0.8
@@ -167,7 +187,7 @@ class GOODMotif2(InMemoryDataset):
                 else:
                     basis_id = split_id + 2
                 width_basis = 10 + np.random.random_integers(-5, 5)
-                data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id)
+                data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id, shift='covariate')
                 data.env_id = torch.LongTensor([basis_id])
                 all_split_list[split_id].append(data)
 
@@ -204,7 +224,7 @@ class GOODMotif2(InMemoryDataset):
                     basis_id = motif_id
                 else:
                     basis_id = random.randint(0, 2)
-                data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id)
+                data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id, shift='concept')
                 data.env_id = torch.LongTensor([basis_id])
                 train_list.append(data)
 
@@ -216,7 +236,7 @@ class GOODMotif2(InMemoryDataset):
                 basis_id = motif_id
             else:
                 basis_id = random.randint(0, 2)
-            data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id)
+            data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id, shift='concept')
             val_list.append(data)
 
         test_list = []
@@ -227,7 +247,7 @@ class GOODMotif2(InMemoryDataset):
                 basis_id = motif_id
             else:
                 basis_id = random.randint(0, 2)
-            data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id)
+            data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id, shift='concept')
             test_list.append(data)
 
         id_test_ratio = 0.15
@@ -265,7 +285,7 @@ class GOODMotif2(InMemoryDataset):
 
                 # --- G_C controls G_S's width ---
 
-                data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id)
+                data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id, shift='FIIF')
                 data.env_id = torch.LongTensor([basis_id])
                 all_split_list[split_id].append(data)
 
@@ -315,7 +335,7 @@ class GOODMotif2(InMemoryDataset):
                 else:
                     width_basis = 20 + random.randint(-10, 10)
 
-                data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id, y=data_y)
+                data = self.gen_data(basis_id=basis_id, width_basis=width_basis, motif_id=motif_id, y=data_y, shift='PIIF')
                 data.env_id = torch.LongTensor([basis_id])
                 all_split_list[split_id].append(data)
 
@@ -343,9 +363,11 @@ class GOODMotif2(InMemoryDataset):
             print("#IN#FIIF shift done!")
             PIIF_shift_list = self.get_basis_PIIF_list(self.num_data)
             print("#IN#PIIF shift done!")
+            together_shift_list = self.get_basis_all_list(self.num_data)
+            print("#IN#all shift done!")
         else:
             raise ValueError(f'Dataset domain cannot be "{self.domain}"')
-        all_shift_list = covariate_shift_list + concept_shift_list + FIIF_shift_list + PIIF_shift_list
+        all_shift_list = covariate_shift_list + concept_shift_list + FIIF_shift_list + PIIF_shift_list + together_shift_list
         for i, final_data_list in enumerate(all_shift_list):
             data, slices = self.collate(final_data_list)
             torch.save((data, slices), self.processed_paths[i])

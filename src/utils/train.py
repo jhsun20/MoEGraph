@@ -378,6 +378,10 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     has_motif_attr = None  # lazily determined from first batch
     per_motif_gate_sum = {}   # basis_id -> tensor(K,)
     per_motif_count = {}      # basis_id -> int
+    
+    has_shift_attr = None
+    per_shift_gate_sum = {'covariate': 0, 'FIIF': 0, 'PIIF': 0}
+    per_shift_count = {'covariate': 0, 'FIIF': 0, 'PIIF': 0}
 
     if config['model']['parallel']:
         verbose = model.module.verbose
@@ -437,6 +441,48 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
                     else:
                         per_motif_gate_sum[m_int] = gw_m_sum.clone()
                         per_motif_count[m_int] = n_m
+        # ------------------------------------------------
+        if has_shift_attr is None:
+            has_shift_attr = hasattr(data, "shift")
+
+        if has_shift_attr:
+            shift_ids = data.shift  # expected: list of strings of length B
+
+            # Normalize to list[str] of length batch_size
+            if isinstance(shift_ids, str):
+                shift_ids = [shift_ids] * batch_size
+            elif isinstance(shift_ids, (list, tuple)):
+                if len(shift_ids) != batch_size:
+                    # Defensive fallback: broadcast first element
+                    shift_ids = [shift_ids[0]] * batch_size
+            else:
+                # Unknown type: stringify and broadcast
+                shift_ids = [str(shift_ids)] * batch_size
+
+            gw_cpu = gate_weights.detach().cpu()  # (B, K)
+
+            for i in range(batch_size):
+                shift_name = shift_ids[i]
+                if isinstance(shift_name, bytes):
+                    shift_name = shift_name.decode("utf-8")
+                shift_name = str(shift_name)
+
+                # Skip unknown shift types (if your dict is fixed)
+                if shift_name not in per_shift_gate_sum:
+                    # Or, if you prefer, dynamically add new keys here instead of continue.
+                    continue
+
+                v = gw_cpu[i]  # (K,)
+
+                # First time for this shift -> replace scalar 0 with tensor
+                if isinstance(per_shift_gate_sum[shift_name], (int, float)):
+                    per_shift_gate_sum[shift_name] = v.clone()
+                else:
+                    per_shift_gate_sum[shift_name] += v
+
+                per_shift_count[shift_name] += 1
+        # ------------------------------------------
+
         # ------------------------------------------------
 
 
@@ -574,6 +620,23 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
                 [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
             )
             print(f"  motif {m} (n={total_count}): {pretty}")
+    # --------------------------------------------
+
+    # ---- NEW: per-shift gate usage summary ----
+    if has_shift_attr:
+        print("\nPer-shift gate usage (mean gate weight per expert):")
+        for shift_name, gate_sum in per_shift_gate_sum.items():
+            count = per_shift_count[shift_name]
+            if count == 0:
+                continue
+            avg = gate_sum / count  # (K,)
+            avg_list = avg.tolist()
+            pretty = " ".join(
+                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+            )
+            print(f"  shift '{shift_name}' (n={count}): {pretty}")
+            metrics[f"shift_{shift_name}_gate_load"] = avg_list
+
     # --------------------------------------------
 
     # --- Majority vote accuracy ---
