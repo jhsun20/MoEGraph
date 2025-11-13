@@ -214,6 +214,15 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         model.set_epoch(epoch)
 
     gate_weight_accumulator = []
+
+    # ---- NEW: per-basis gate usage accumulators ----
+    has_motif_attr = None  # lazily determined from first batch
+    per_motif_gate_sum = {}   # basis_id -> tensor(K,)
+    per_motif_count = {}      # basis_id -> int
+    
+    has_shift_attr = None
+    per_shift_gate_sum = {'covariate': 0, 'FIIF': 0, 'PIIF': 0}
+    per_shift_count = {'covariate': 0, 'FIIF': 0, 'PIIF': 0}
     
     # ------ epoch-level accumulators for mask keep/drop ------
     acc_node_keep_sum = None; acc_node_cnt = 0
@@ -245,6 +254,79 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         # --- FIX: gate_weights is already (B, K); do NOT squeeze/transpose ---
         gate_weights = aggregated_outputs['gate_weights']  # (B, K)
         gate_weight_accumulator.append(gate_weights.cpu())
+
+        # ---- NEW: accumulate per-basis gate usage ----
+        if has_motif_attr is None:
+            has_motif_attr = hasattr(data, "y")
+
+        if has_motif_attr:
+            motif_ids = data.y  # could be tensor or scalar
+            if torch.is_tensor(motif_ids):
+                # Expect shape (B,) or (B, 1); flatten to (B,)
+                motif_ids = motif_ids.view(-1).detach().cpu()
+            else:
+                # Fallback: scalar basis_id, broadcast to batch
+                motif_ids = torch.tensor([motif_ids] * batch_size)
+
+            # Only proceed if we have one basis_id per graph
+            if motif_ids.numel() == batch_size:
+                gw_cpu = gate_weights.detach().cpu()  # (B, K)
+                unique_motif = motif_ids.unique()
+                for m in unique_motif:
+                    mask = (motif_ids == m)
+                    n_m = int(mask.sum().item())
+                    if n_m == 0:
+                        continue
+                    gw_m_sum = gw_cpu[mask].sum(dim=0)  # (K,)
+
+                    m_int = int(m.item())
+                    if m_int in per_motif_gate_sum:
+                        per_motif_gate_sum[m_int] += gw_m_sum
+                        per_motif_count[m_int] += n_m
+                    else:
+                        per_motif_gate_sum[m_int] = gw_m_sum.clone()
+                        per_motif_count[m_int] = n_m
+        # ------------------------------------------------
+        if has_shift_attr is None:
+            has_shift_attr = hasattr(data, "shift")
+
+        if has_shift_attr:
+            shift_ids = data.shift  # expected: list of strings of length B
+
+            # Normalize to list[str] of length batch_size
+            if isinstance(shift_ids, str):
+                shift_ids = [shift_ids] * batch_size
+            elif isinstance(shift_ids, (list, tuple)):
+                if len(shift_ids) != batch_size:
+                    # Defensive fallback: broadcast first element
+                    shift_ids = [shift_ids[0]] * batch_size
+            else:
+                # Unknown type: stringify and broadcast
+                shift_ids = [str(shift_ids)] * batch_size
+
+            gw_cpu = gate_weights.detach().cpu()  # (B, K)
+
+            for i in range(batch_size):
+                shift_name = shift_ids[i]
+                if isinstance(shift_name, bytes):
+                    shift_name = shift_name.decode("utf-8")
+                shift_name = str(shift_name)
+
+                # Skip unknown shift types (if your dict is fixed)
+                if shift_name not in per_shift_gate_sum:
+                    # Or, if you prefer, dynamically add new keys here instead of continue.
+                    continue
+
+                v = gw_cpu[i]  # (K,)
+
+                # First time for this shift -> replace scalar 0 with tensor
+                if isinstance(per_shift_gate_sum[shift_name], (int, float)):
+                    per_shift_gate_sum[shift_name] = v.clone()
+                else:
+                    per_shift_gate_sum[shift_name] += v
+
+                per_shift_count[shift_name] += 1
+        # ------------------------------------------
 
         total_loss += loss.item() * batch_size
         total_ce_loss += aggregated_outputs['loss_ce'].item() * batch_size
@@ -314,6 +396,35 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
                 f"load={load_balance[i].item():.4f} | "
                 f"top1={top1_share[i].item():.4f} "
                 f"({int(top1_counts[i].item())}/{total_n})")
+
+    # ---- NEW: per-basis gate usage summary ----
+    if has_motif_attr:
+        print("\nPer-motif gate usage (mean gate weight per expert):")
+        for m in sorted(per_motif_gate_sum.keys()):
+            total_count = per_motif_count[m]
+            avg_load = per_motif_gate_sum[m] / max(total_count, 1)  # (K,)
+            avg_list = avg_load.tolist()
+            pretty = " ".join(
+                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+            )
+            print(f"  motif {m} (n={total_count}): {pretty}")
+    # --------------------------------------------
+
+    # ---- NEW: per-shift gate usage summary ----
+    if has_shift_attr:
+        print("\nPer-shift gate usage (mean gate weight per expert):")
+        for shift_name, gate_sum in per_shift_gate_sum.items():
+            count = per_shift_count[shift_name]
+            if count == 0:
+                continue
+            avg = gate_sum / count  # (K,)
+            avg_list = avg.tolist()
+            pretty = " ".join(
+                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+            )
+            print(f"  shift '{shift_name}' (n={count}): {pretty}")
+
+    # --------------------------------------------
  
 
     final_outputs = torch.cat(all_aggregated_outputs, dim=0)
