@@ -1,0 +1,78 @@
+# Main configuration file for GNN experiments
+
+# Experiment settings
+experiment:
+  name: "moe_motif2_basis" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  device: "cuda"  # or "cpu"
+  debug:
+    enable: false
+    num_samples: 512
+    epochs: 50
+    verbose: false
+  seeds: [1, 2, 3, 4, 5]  # Add more seeds as needed
+  hyper_search:
+    enable: false
+    n_trials_1: 10
+    n_trials_2: 5
+    test_after: true
+
+# Dataset configuration
+dataset:
+  dataset_name: "GOODMotif2"  # Specific dataset from GOOD
+  task_type: "graph_classification"
+  path: "./datasets"
+  shift_type: "FIIF" # covariate, concept, no_shift, PIIF, FIIF
+  batch_size: 128
+  num_workers: 4
+  domain: 'basis' # basis or size
+
+# Model configuration
+model:
+  type: "moe"  # Options: GIN, GCN, GraphSAGE, moe
+  parallel: false
+  hidden_dim: 300
+  global_pooling: "mean"
+  num_layers: 3
+  dropout: 0.5
+  weight_str: 0.0
+  weight_la: 0.0
+  weight_ea: 0.0
+  weight_reg: 1.0
+  weight_ce: 1.0
+  weight_div: 0.0
+  weight_load: 0.5
+  num_experts: 8
+  aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
+  adv_warmup_epochs: 30
+  adv_ramp_epochs: 5
+  strinv_warmup_epochs: 5
+  strinv_ramp_epochs: 5
+  rho_edge: 0.55
+
+
+# Training configuration
+training:
+  epochs: 50
+  lr: 0.001 # BEST 0.001
+  weight_decay: 0.0001
+  early_stopping:
+    patience: 20
+    min_delta: 0.001
+
+# Logging configuration
+logging:
+  wandb:
+    enable: false
+    project: "graph_moe_ood"
+    entity: "jhsun163-university-of-toronto"
+  log_interval: 10
+  save_model: true
+
+# Gating module configuration
+gate:
+  activation: "entmax"
+  entmax_alpha: 1.38
+  depth: 3
+  hidden_dim: 64
+  train_after: 10
+  finetune_epochs: 0
