@@ -50,7 +50,7 @@ class GOODMotif2(InMemoryDataset):
         self.basis_role_end = {'wheel': 0, 'tree': 0, 'ladder': 0, 'circular_ladder': 0,
                                'dorogovtsev_goltsev_mendes': 0, 'star': 1, 'path': 1}
         self.all_motifs = [[["house"]], [["dircycle"]], [["crane"]]]
-        self.num_data = 3000
+        self.num_data = 30000
 
         super().__init__(root, transform, pre_transform)
         subset_pt = 0
