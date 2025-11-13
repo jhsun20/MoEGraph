@@ -374,6 +374,11 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
 
     gate_weight_accumulator = []
 
+    # ---- NEW: per-basis gate usage accumulators ----
+    has_basis_attr = None  # lazily determined from first batch
+    per_basis_gate_sum = {}   # basis_id -> tensor(K,)
+    per_basis_count = {}      # basis_id -> int
+
     if config['model']['parallel']:
         verbose = model.module.verbose
         model.module.set_epoch(epoch)
@@ -401,6 +406,39 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         # --- FIX: gate_weights is (B, K); no squeeze/transpose ---
         gate_weights = aggregated_outputs['gate_weights']  # (B, K)
         gate_weight_accumulator.append(gate_weights.cpu())
+        # ---- NEW: accumulate per-basis gate usage ----
+        if has_basis_attr is None:
+            has_basis_attr = hasattr(data, "basis_id")
+
+        if has_basis_attr:
+            basis_ids = data.basis_id  # could be tensor or scalar
+            if torch.is_tensor(basis_ids):
+                # Expect shape (B,) or (B, 1); flatten to (B,)
+                basis_ids = basis_ids.view(-1).detach().cpu()
+            else:
+                # Fallback: scalar basis_id, broadcast to batch
+                basis_ids = torch.tensor([basis_ids] * batch_size)
+
+            # Only proceed if we have one basis_id per graph
+            if basis_ids.numel() == batch_size:
+                gw_cpu = gate_weights.detach().cpu()  # (B, K)
+                unique_basis = basis_ids.unique()
+                for b in unique_basis:
+                    mask = (basis_ids == b)
+                    n_b = int(mask.sum().item())
+                    if n_b == 0:
+                        continue
+                    gw_b_sum = gw_cpu[mask].sum(dim=0)  # (K,)
+
+                    b_int = int(b.item())
+                    if b_int in per_basis_gate_sum:
+                        per_basis_gate_sum[b_int] += gw_b_sum
+                        per_basis_count[b_int] += n_b
+                    else:
+                        per_basis_gate_sum[b_int] = gw_b_sum.clone()
+                        per_basis_count[b_int] = n_b
+        # ------------------------------------------------
+
 
         expert_logits = aggregated_outputs['expert_logits']  # (B, K, C)
 
@@ -524,6 +562,19 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     final_outputs = torch.cat(all_aggregated_outputs, dim=0)
     final_targets = torch.cat(all_targets, dim=0)
     metrics = compute_metrics(final_outputs, final_targets, metric_type)
+
+    # ---- NEW: per-basis gate usage summary ----
+    if has_basis_attr:
+        print("\nPer-basis gate usage (mean gate weight per expert):")
+        for b in sorted(per_basis_gate_sum.keys()):
+            total_count = per_basis_count[b]
+            avg_load = per_basis_gate_sum[b] / max(total_count, 1)  # (K,)
+            avg_list = avg_load.tolist()
+            pretty = " ".join(
+                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+            )
+            print(f"  basis {b} (n={total_count}): {pretty}")
+    # --------------------------------------------
 
     # --- Majority vote accuracy ---
     mv_counts_all = torch.cat(all_mv_counts, dim=0)  # (N, C)
