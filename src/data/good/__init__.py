@@ -10,4 +10,4 @@ from .good_cbas import GOODCBAS
 from .good_pcba import GOODPCBA
 from .good_zinc import GOODZINC
 from .good_motif import GOODMotif
-from .good_motif2 import GOODMotif2
+from .good_motif2 import FPIIFMotif
