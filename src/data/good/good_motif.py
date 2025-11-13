@@ -91,6 +91,7 @@ class GOODMotif(InMemoryDataset):
             if width_basis <= 0:
                 width_basis = 1
         list_shapes = self.all_motifs[motif_id]
+        print("HI IM GENERATING DATA")
         G, role_id, _ = synthetic_structsim.build_graph(
             width_basis, basis_type, list_shapes, start=0, rdm_basis_plugins=True
         )

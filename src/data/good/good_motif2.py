@@ -13,9 +13,13 @@ from munch import Munch
 from torch_geometric.data import InMemoryDataset, extract_zip
 from torch_geometric.utils import from_networkx
 from tqdm import tqdm
+import numpy as np
+from . import synthetic_structsim
+from . import BA3_loc
 
 
-class FPIIFMotif(InMemoryDataset):
+
+class GOODMotif2(InMemoryDataset):
     r"""
     The GOOD-Motif dataset motivated by `Spurious-Motif
     <https://arxiv.org/abs/2201.12872>`_.
@@ -110,10 +114,13 @@ class FPIIFMotif(InMemoryDataset):
             if width_basis <= 0:
                 width_basis = 1
         list_shapes = self.all_motifs[motif_id]
+        # G, role_id, _ = synthetic_structsim.build_graph(
+        #     width_basis, basis_type, list_shapes, start=0, rdm_basis_plugins=True
+        # )
         G, role_id, _ = synthetic_structsim.build_graph(
             width_basis, basis_type, list_shapes, start=0, rdm_basis_plugins=True
         )
-        G = perturb([G], 0.05, id=role_id)[0]
+        G = BA3_loc.perturb([G], 0.05, id=role_id)[0]
         # from GOOD.causal_engine.graph_visualize import plot_graph
         # print(G.edges())
         # plot_graph(G, colors=[1 for _ in G.nodes()])
@@ -364,15 +371,15 @@ class FPIIFMotif(InMemoryDataset):
         meta_info.dataset_type = 'syn'
         meta_info.model_level = 'graph'
 
-        train_dataset = FPIIFMotif(root=dataset_root,
+        train_dataset = GOODMotif2(root=dataset_root,
                                    domain=domain, shift=shift, subset='train', generate=generate)
-        id_val_dataset = FPIIFMotif(root=dataset_root,
+        id_val_dataset = GOODMotif2(root=dataset_root,
                                     domain=domain, shift=shift, subset='id_val', generate=generate) if shift != 'no_shift' else None
-        id_test_dataset = FPIIFMotif(root=dataset_root,
+        id_test_dataset = GOODMotif2(root=dataset_root,
                                      domain=domain, shift=shift, subset='id_test', generate=generate) if shift != 'no_shift' else None
-        val_dataset = FPIIFMotif(root=dataset_root,
+        val_dataset = GOODMotif2(root=dataset_root,
                                  domain=domain, shift=shift, subset='val', generate=generate)
-        test_dataset = FPIIFMotif(root=dataset_root,
+        test_dataset = GOODMotif2(root=dataset_root,
                                   domain=domain, shift=shift, subset='test', generate=generate)
 
         meta_info.dim_node = train_dataset.num_node_features
@@ -399,3 +406,78 @@ class FPIIFMotif(InMemoryDataset):
         return {'train': train_dataset, 'id_val': id_val_dataset, 'id_test': id_test_dataset,
                 'val': val_dataset, 'test': test_dataset, 'task': train_dataset.task,
                 'metric': train_dataset.metric}, meta_info
+
+def build_graph(
+        width_basis,
+        basis_type,
+        list_shapes,
+        start=0,
+        rdm_basis_plugins=False,
+        add_random_edges=0,
+        m=5,
+):
+    """This function creates a basis (scale-free, path, or cycle)
+    and attaches elements of the type in the list randomly along the basis.
+    Possibility to add random edges afterwards.
+    INPUT:
+    --------------------------------------------------------------------------------------
+    width_basis      :      width (in terms of number of nodes) of the basis
+    basis_type       :      (torus, string, or cycle)
+    shapes           :      list of shape list (1st arg: type of shape,
+                            next args:args for building the shape,
+                            except for the start)
+    start            :      initial nb for the first node
+    rdm_basis_plugins:      boolean. Should the shapes be randomly placed
+                            along the basis (True) or regularly (False)?
+    add_random_edges :      nb of edges to randomly add on the structure
+    m                :      number of edges to attach to existing node (for BA graph)
+    OUTPUT:
+    --------------------------------------------------------------------------------------
+    basis            :      a nx graph with the particular shape
+    role_ids         :      labels for each role
+    plugins          :      node ids with the attached shapes
+    """
+    if basis_type == "ba":
+        basis, role_id = eval(basis_type)(start, width_basis, m=m)
+    else:
+        basis, role_id = eval(basis_type)(start, width_basis)
+
+    n_basis, n_shapes = nx.number_of_nodes(basis), len(list_shapes)
+    start += n_basis  # indicator of the id of the next node
+
+    # Sample (with replacement) where to attach the new motifs
+    if rdm_basis_plugins is True:
+        plugins = np.random.choice(n_basis, n_shapes, replace=False)
+    else:
+        spacing = math.floor(n_basis / n_shapes)
+        plugins = [int(k * spacing) for k in range(n_shapes)]
+    seen_shapes = {"basis": [0, n_basis]}
+
+    for shape_id, shape in enumerate(list_shapes):
+        shape_type = shape[0]
+        args = [start]
+        if len(shape) > 1:
+            args += shape[1:]
+        args += [0]
+        graph_s, roles_graph_s = eval(shape_type)(*args)
+        n_s = nx.number_of_nodes(graph_s)
+        try:
+            col_start = seen_shapes[shape_type][0]
+        except:
+            col_start = np.max(role_id) + 1
+            seen_shapes[shape_type] = [col_start, n_s]
+        # Attach the shape to the basis
+        basis.add_nodes_from(graph_s.nodes())
+        basis.add_edges_from(graph_s.edges())
+        basis.add_edges_from([(start, plugins[shape_id])])
+        temp_labels = [r + col_start for r in roles_graph_s]
+        role_id += temp_labels
+        start += n_s
+
+    if add_random_edges > 0:
+        # add random edges between nodes:
+        for p in range(add_random_edges):
+            src, dest = np.random.choice(nx.number_of_nodes(basis), 2, replace=False)
+            basis.add_edges_from([(src, dest)])
+
+    return basis, role_id, plugins
