@@ -409,6 +409,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         # ---- NEW: accumulate per-basis gate usage ----
         if has_basis_attr is None:
             has_basis_attr = hasattr(data, "basis_id")
+            print(data.basis_id)
 
         if has_basis_attr:
             basis_ids = data.basis_id  # could be tensor or scalar

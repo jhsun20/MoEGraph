@@ -17,13 +17,13 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODHIV"  # Specific dataset from GOOD
+  dataset_name: "GOODMotif"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift
   batch_size: 32
   num_workers: 4
-  domain: "size"
+  domain: "basis"
 
 # Model configuration
 model:

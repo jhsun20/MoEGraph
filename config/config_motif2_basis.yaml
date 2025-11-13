@@ -22,7 +22,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift, PIIF, FIIF
-  batch_size: 128
+  batch_size: 32
   num_workers: 4
   domain: 'basis' # basis or size
 
@@ -75,4 +75,4 @@ gate:
   depth: 3
   hidden_dim: 64
   train_after: 10
-  finetune_epochs: 5
+  finetune_epochs: 0
