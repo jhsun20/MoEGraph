@@ -14,7 +14,7 @@ def objective(trial, config_base, phase):
     if phase == 1:
         config['dataset']['batch_size'] = trial.suggest_categorical("batch_size", [32, 64, 128])
         config['training']['lr'] = trial.suggest_categorical("lr", [0.001, 0.0005, 0.0001])
-        config['model']['rho_edge'] = trial.suggest_float("rho_edge", 0.5, 0.9)
+        config['model']['rho_edge'] = trial.suggest_float("rho_edge", 0.1, 0.9)
 
     # --- Modify config for tuning ---
     config['logging']['wandb']['name'] = f"tune-trial-{trial.number}"
