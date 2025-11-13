@@ -18,7 +18,7 @@ experiment:
 
 # Dataset configuration
 dataset:
-  dataset_name: "GOODMotif"  # Specific dataset from GOOD
+  dataset_name: "GOODMotif2"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "covariate" # covariate, concept, no_shift, PIIF, FIIF
