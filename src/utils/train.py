@@ -216,9 +216,9 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     gate_weight_accumulator = []
 
     # ---- NEW: per-basis gate usage accumulators ----
-    has_motif_attr = None  # lazily determined from first batch
-    per_motif_gate_sum = {}   # basis_id -> tensor(K,)
-    per_motif_count = {}      # basis_id -> int
+    has_basis_attr = None  # lazily determined from first batch
+    per_basis_gate_sum = {}   # basis_id -> tensor(K,)
+    per_basis_count = {}      # basis_id -> int -> int
     
     has_shift_attr = None
     per_shift_gate_sum = {'covariate': 0, 'FIIF': 0, 'PIIF': 0}
@@ -256,36 +256,35 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         gate_weight_accumulator.append(gate_weights.cpu())
 
         # ---- NEW: accumulate per-basis gate usage ----
-        if has_motif_attr is None:
-            has_motif_attr = hasattr(data, "y")
+        if has_basis_attr is None:
+            has_basis_attr = hasattr(data, "basis_id")
 
-        if has_motif_attr:
-            motif_ids = data.y  # could be tensor or scalar
-            if torch.is_tensor(motif_ids):
+        if has_basis_attr:
+            basis_ids = data.basis_id  # could be tensor or scalar
+            if torch.is_tensor(basis_ids):
                 # Expect shape (B,) or (B, 1); flatten to (B,)
-                motif_ids = motif_ids.view(-1).detach().cpu()
+                basis_ids = basis_ids.view(-1).detach().cpu()
             else:
                 # Fallback: scalar basis_id, broadcast to batch
-                motif_ids = torch.tensor([motif_ids] * batch_size)
+                basis_ids = torch.tensor([basis_ids] * batch_size)
 
             # Only proceed if we have one basis_id per graph
-            if motif_ids.numel() == batch_size:
+            if basis_ids.numel() == batch_size:
                 gw_cpu = gate_weights.detach().cpu()  # (B, K)
-                unique_motif = motif_ids.unique()
-                for m in unique_motif:
-                    mask = (motif_ids == m)
-                    n_m = int(mask.sum().item())
-                    if n_m == 0:
+                unique_basis = basis_ids.unique()
+                for b in unique_basis:
+                    mask = (basis_ids == b)
+                    n_b = int(mask.sum().item())
+                    if n_b == 0:
                         continue
-                    gw_m_sum = gw_cpu[mask].sum(dim=0)  # (K,)
-
-                    m_int = int(m.item())
-                    if m_int in per_motif_gate_sum:
-                        per_motif_gate_sum[m_int] += gw_m_sum
-                        per_motif_count[m_int] += n_m
+                    gw_b_sum = gw_cpu[mask].sum(dim=0)  # (K,)
+                    b_int = int(b.item())
+                    if b_int in per_basis_gate_sum:
+                        per_basis_gate_sum[b_int] += gw_b_sum
+                        per_basis_count[b_int] += n_b
                     else:
-                        per_motif_gate_sum[m_int] = gw_m_sum.clone()
-                        per_motif_count[m_int] = n_m
+                        per_basis_gate_sum[b_int] = gw_b_sum.clone()
+                        per_basis_count[b_int] = n_b
         # ------------------------------------------------
         if has_shift_attr is None:
             has_shift_attr = hasattr(data, "shift")
@@ -398,16 +397,16 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
                 f"({int(top1_counts[i].item())}/{total_n})")
 
     # ---- NEW: per-basis gate usage summary ----
-    if has_motif_attr:
-        print("\nPer-motif gate usage (mean gate weight per expert):")
-        for m in sorted(per_motif_gate_sum.keys()):
-            total_count = per_motif_count[m]
-            avg_load = per_motif_gate_sum[m] / max(total_count, 1)  # (K,)
+    if has_basis_attr:
+        print("\nPer-basis gate usage (mean gate weight per expert):")
+        for b in sorted(per_basis_gate_sum.keys()):
+            total_count = per_basis_count[b]
+            avg_load = per_basis_gate_sum[b] / max(total_count, 1)  # (K,)
             avg_list = avg_load.tolist()
             pretty = " ".join(
                 [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
             )
-            print(f"  motif {m} (n={total_count}): {pretty}")
+            print(f"  basis {b} (n={total_count}): {pretty}")
     # --------------------------------------------
 
     # ---- NEW: per-shift gate usage summary ----
