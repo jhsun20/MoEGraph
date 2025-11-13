@@ -408,11 +408,10 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         gate_weight_accumulator.append(gate_weights.cpu())
         # ---- NEW: accumulate per-basis gate usage ----
         if has_motif_attr is None:
-            has_motif_attr = hasattr(data, "motif_id")
-            print(data.motif_id)
+            has_motif_attr = hasattr(data, "y")
 
         if has_motif_attr:
-            motif_ids = data.motif_id  # could be tensor or scalar
+            motif_ids = data.y  # could be tensor or scalar
             if torch.is_tensor(motif_ids):
                 # Expect shape (B,) or (B, 1); flatten to (B,)
                 motif_ids = motif_ids.view(-1).detach().cpu()
