@@ -2,9 +2,9 @@
 
 # List of config files to run (edit this list)
 CONFIGS=(
-  "config/config_motif2_basis.yaml"
-  "config/config_hiv_size.yaml"
-  "config/config_hiv_scaffold.yaml"
+  "config/config_motif2_basis_covariate.yaml"
+  "config/config_motif2_basis_FIIF.yaml"
+  "config/config_motif2_basis_PIIF.yaml"
 )
 
 # Run each config sequentially

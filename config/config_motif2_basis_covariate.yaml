@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moe_motif2_basis" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moe_motif2_basis_covariate" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
