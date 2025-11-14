@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moe_motif2_basis_PIIF" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moe_motif2_basis_all" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -47,13 +47,13 @@ model:
   adv_ramp_epochs: 5
   strinv_warmup_epochs: 5
   strinv_ramp_epochs: 5
-  rho_edge: 0.9
+  rho_edge: 0.85
 
 
 # Training configuration
 training:
   epochs: 30
-  lr: 0.001 # BEST 0.001
+  lr: 0.0005 # BEST 0.001
   weight_decay: 0.0001
   early_stopping:
     patience: 20
