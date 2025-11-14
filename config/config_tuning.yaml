@@ -2,7 +2,7 @@
 
 # Experiment settings
 experiment:
-  name: "moe_motif2_PIIF_tuning" # baseline_gnn or moe_nogate_noaug or moe_noaug
+  name: "moe_motif2_FIIF_tuning" # baseline_gnn or moe_nogate_noaug or moe_noaug
   device: "cuda"  # or "cpu"
   debug:
     enable: false
@@ -21,7 +21,7 @@ dataset:
   dataset_name: "GOODMotif2"  # Specific dataset from GOOD
   task_type: "graph_classification"
   path: "./datasets"
-  shift_type: "PIIF" # covariate, concept, no_shift, PIIF, FIIF
+  shift_type: "FIIF" # covariate, concept, no_shift, PIIF, FIIF
   batch_size: 64
   num_workers: 4
   domain: 'basis' # basis or size
