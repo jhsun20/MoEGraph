@@ -151,63 +151,8 @@ class Experts(nn.Module):
             for _ in range(self.num_experts)
         ])
 
-        self.expert_classifiers_spur = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, self.num_classes)
-            )
-            for _ in range(self.num_experts)
-        ])
 
         self.num_envs = dataset_info['num_envs']
-        self.env_classifier_encoders = nn.ModuleList([
-            GINEncoderWithEdgeWeight(
-                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling) 
-        for _ in range(self.num_experts)
-        ])
-
-        self.expert_env_classifiers_causal = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, self.num_envs)
-            )
-            for _ in range(self.num_experts)
-        ])
-        self.expert_env_classifiers_spur = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, self.num_envs)
-            )
-            for _ in range(self.num_experts)
-        ])
-
-        self.spur_classifier_encoders = nn.ModuleList([
-            GINEncoderWithEdgeWeight(
-                self.num_features, hidden_dim, num_layers, dropout, train_eps=True, global_pooling=self.global_pooling)
-        for _ in range(self.num_experts)
-        ])
-
-        # self.expert_classifiers_spur = nn.ModuleList([
-        #     nn.Sequential(
-        #         nn.Linear(hidden_dim, hidden_dim),
-        #         nn.ReLU(),
-        #         nn.Linear(hidden_dim, self.num_classes)
-        #     )
-        #     for _ in range(self.num_experts)
-        # ])
-
-        # --- LECI-style tiny GINs for the LA (spur/complement) branch ---
-        # self.label_classifier_encoder = GINEncoderWithEdgeWeight(
-        #     self.num_features, hidden_dim, num_layers, dropout, train_eps=True
-        # )
-
-        # Label-adversarial head on semantic residual h_S
-        # self.expert_label_classifiers = nn.ModuleList([
-        #     nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, self.num_classes)) for _ in range(self.num_experts)
-        # ])
 
 
 
@@ -379,80 +324,16 @@ class Experts(nn.Module):
                 str_vec= hC_k.new_zeros(B)   # (B,)
 
                 if not is_eval:
-                    if self._lambda_L > 0:
-                        h_spur, edge_weight_spur = self._encode_complement_subgraph(
-                                data=data,
-                                node_mask=node_mask_k,           # (N,1) or (N,)
-                                edge_mask=edge_mask_k.view(-1),  # (E,)
-                                encoder=self.classifier_encoders[k],
-                                symmetrize=False
-                        )
-                                
-                        la_vec = self._spur_loss(
-                            h_masked=hC_k,
-                            labels=target,
-                            h_spur=h_spur,
-                            expert_idx=k,
-                            edge_index=edge_index,
-                            edge_weight=edge_weight_spur,
-                            batch=batch,
-                            cf_mode="entropy",              # keep your mode
-                            reduction="none",             # <-- per-sample
-                        ) * self._lambda_L                                  # (B,)
-                        la = la_vec.mean()                                  # (B,) 
-                    else:
-                        la = hC_k.new_tensor(0.0)
-                        B = hC_k.size(0)
-                        la_vec = hC_k.new_zeros(B)
+                    la = hC_k.new_tensor(0.0)
+                    B = hC_k.size(0)
+                    la_vec = hC_k.new_zeros(B)
 
                     # ----- EA / STR (env) with per-sample signals -----
-                    if self._lambda_E > 0:
-                        # 1) STR (spur env) — per-sample CE on env classifier fed the complement (spur) graph
-                        h_spur_env, edge_weight_spur_env = self._encode_complement_subgraph(
-                            data=data,
-                            node_mask=node_mask_k,            # (N,1) or (N,)
-                            edge_mask=edge_mask_k.view(-1),   # (E,)
-                            encoder=self.env_classifier_encoders[k],
-                            symmetrize=False
-                        )
-                        spur_env_logits = self.expert_env_classifiers_spur[k](h_spur_env)  # (B, |E|)
-
-                        # Per-sample STR vector
-                        str_vec = F.cross_entropy(
-                            spur_env_logits, env_labels.view(-1).long(), reduction="none"
-                        ) * self.weight_str                     # (B,)
-                        # Scalar for your existing loss accounting
-                        str_loss = str_vec.mean()
-
-                        # 2) EA (stable env) — per-sample via _causal_loss(..., reduction="none")
-                        masked_x_k    = x * node_mask_k
-                        node_weight_k = node_mask_k.view(-1)
-                        edge_weight_k = edge_mask_k.view(-1)
-
-                        h_stable_env_k = self.env_classifier_encoders[k](
-                            masked_x_k, edge_index, edge_weight=edge_weight_k, batch=batch, node_weight=node_weight_k
-                        )                                         # (B, H_e)
-
-                        ea_vec = self._causal_loss(
-                            h_masked=hC_k,
-                            h_ea=h_stable_env_k,
-                            expert_idx=k,
-                            env_labels=env_labels,
-                            edge_index=edge_index,
-                            edge_weight=edge_weight_k,
-                            batch=batch,
-                            cf_mode="entropy",
-                            reduction="none",                     # <-- per-sample
-                        ) * self._lambda_E                        # (B,)
-                        ea = ea_vec.mean()      # scalar for logs
-
-                    else:
-                        # off-path defaults
-                        ea       = hC_k.new_tensor(0.0)
-                        str_loss = hC_k.new_tensor(0.0)
-                        B        = hC_k.size(0)
-                        ea_vec   = hC_k.new_zeros(B)              # (B,)
-                        str_vec  = hC_k.new_zeros(B)              # (B,)
+                    ea       = hC_k.new_tensor(0.0)
+                    str_loss = hC_k.new_tensor(0.0)
+                    B        = hC_k.size(0)
+                    ea_vec   = hC_k.new_zeros(B)              # (B,)
+                    str_vec  = hC_k.new_zeros(B)              # (B,)
 
                 else:
                     la = hC_k.new_tensor(0.0)
@@ -668,147 +549,6 @@ class Experts(nn.Module):
 
         #return ((node_keep_pg - rho_node) ** 2).mean() + ((edge_keep_pg - rho_edge) ** 2).mean()
         return ((edge_keep_pg - rho_edge) ** 2).mean() * 5.0
-
-    def _causal_loss(
-        self,
-        h_masked: torch.Tensor,
-        h_ea:   Optional[torch.Tensor] = None,
-        expert_idx: Optional[int] = None,
-        env_labels: Optional[torch.Tensor] = None,
-        edge_index: Optional[torch.Tensor] = None,
-        edge_weight: Optional[torch.Tensor] = None,
-        batch: Optional[torch.Tensor] = None,
-        *,
-        cf_mode: str = "revce",
-        cf_weights: Optional[dict] = None,
-        tau_prob: float = 0.3,
-        tau_logit: float = 0.0,
-        reduction: str = "mean",                # <-- NEW
-    ) -> torch.Tensor:
-        """
-        Causal->env CF objective. Default is adversarial CE (reverse-CE behavior via GRL).
-        For entropy/KL-style CF, use the same env head as the main EA path, frozen, no GRL.
-        """
-        if h_ea is None:
-            raise ValueError("h_ea (env features from G_C) must be provided")
-
-        if cf_mode == "revce":
-            env_tgt = env_labels.view(-1).long().to(h_ea.device)
-            h_ea_adv = grad_reverse(h_ea, self._lambda_E)
-            logits_E = self.expert_env_classifiers_causal[expert_idx](h_ea_adv)  # (B, |E|)
-            if reduction == "none":
-                return F.cross_entropy(logits_E, env_tgt, reduction="none")      # (B,)
-            return F.cross_entropy(logits_E, env_tgt)                             # scalar
-
-        with self._frozen_params(self.expert_env_classifiers_spur[expert_idx], freeze_bn_running_stats=True):
-            logits_env_cf = self.expert_env_classifiers_spur[expert_idx](h_ea)    # (B, |E|)
-
-        # map cf_mode -> weights
-        w = dict(w_entropy=0.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0, w_true_hinge_logit=0.0, w_one_minus_true=0.0)
-        if cf_mode == "entropy":
-            w["w_entropy"] = 1.0
-        elif cf_mode == "kl_uniform":
-            w["w_kl_uniform"] = 1.0
-        elif cf_mode == "hinge_prob":
-            w["w_true_hinge_prob"] = 1.0
-        elif cf_mode == "hinge_logit":
-            w["w_true_hinge_logit"] = 1.0
-        elif cf_mode == "one_minus_true":
-            w["w_one_minus_true"] = 1.0
-        elif cf_mode == "mix":
-            if cf_weights:
-                for k in w.keys():
-                    if k in cf_weights:
-                        w[k] = float(cf_weights[k])
-            else:
-                w.update(dict(w_entropy=0.8, w_true_hinge_prob=0.2))
-        else:
-            raise ValueError(f"Unknown cf_mode={cf_mode}")
-
-        # we still need env labels for hinges on the "true" env class (when used)
-        env_tgt = env_labels.view(-1).long().to(logits_env_cf.device)
-
-        nec = self._cf_label_necessity_losses(
-            logits_drop=logits_env_cf,
-            target=env_tgt,
-            num_classes=self.num_envs,
-            **w,
-            tau_prob=tau_prob,
-            tau_logit=tau_logit,
-            reduction=reduction,                 # <-- propagate
-        )
-        return nec["loss_nec"]
-
-
-    def _spur_loss(
-        self,
-        h_masked: torch.Tensor,
-        labels: torch.Tensor,
-        h_spur: Optional[torch.Tensor] = None,
-        expert_idx: Optional[int] = None,
-        edge_index: Optional[torch.Tensor] = None,
-        edge_weight: Optional[torch.Tensor] = None,
-        batch: Optional[torch.Tensor] = None,
-        *,
-        cf_mode: str = "revce",
-        cf_weights: Optional[dict] = None,
-        tau_prob: float = 0.3,
-        tau_logit: float = 0.0,
-        reduction: str = "mean",               # <-- NEW
-    ) -> torch.Tensor:
-        """
-        Spurious->label CF objective. Default is reverse-CE (as before).
-        For entropy/KL-style CF, use the same label head as the main path, frozen.
-        """
-        device = h_masked.device
-        if h_spur is None:
-            raise ValueError("h_spur must be provided: encode complement subgraph with la_encoders[k]")
-
-        # normalize label shape/type
-        y = labels.view(-1).long()
-        if cf_mode == "revce":
-            h_spur_adv = grad_reverse(h_spur, self._lambda_L)
-            logits_y_spur = self.expert_classifiers_spur[expert_idx](h_spur_adv)  # (B,C)
-            if reduction == "none":
-                return F.cross_entropy(logits_y_spur, y, reduction="none")        # (B,)
-            return F.cross_entropy(logits_y_spur, y)                               # scalar
-
-        with self._frozen_params(self.expert_classifiers_causal[expert_idx], freeze_bn_running_stats=True):
-            logits_cf = self.expert_classifiers_causal[expert_idx](h_spur)         # (B,C) or (B,1)
-
-        # map cf_mode -> weights for _cf_label_necessity_losses
-        w = dict(w_entropy=0.0, w_kl_uniform=0.0, w_true_hinge_prob=0.0, w_true_hinge_logit=0.0, w_one_minus_true=0.0)
-        if cf_mode == "entropy":
-            w["w_entropy"] = 1.0
-        elif cf_mode == "kl_uniform":
-            w["w_kl_uniform"] = 1.0
-        elif cf_mode == "hinge_prob":
-            w["w_true_hinge_prob"] = 1.0
-        elif cf_mode == "hinge_logit":
-            w["w_true_hinge_logit"] = 1.0
-        elif cf_mode == "one_minus_true":
-            w["w_one_minus_true"] = 1.0
-        elif cf_mode == "mix":
-            if cf_weights:
-                for k in w.keys():
-                    if k in cf_weights:
-                        w[k] = float(cf_weights[k])
-            else:
-                # sensible default mix
-                w.update(dict(w_entropy=0.7, w_true_hinge_prob=0.3))
-        else:
-            raise ValueError(f"Unknown cf_mode={cf_mode}")
-
-        nec = self._cf_label_necessity_losses(
-            logits_drop=logits_cf,
-            target=y,
-            num_classes=self.num_classes,
-            **w,
-            tau_prob=tau_prob,
-            tau_logit=tau_logit,
-            reduction=reduction,                 # <-- propagate
-        )
-        return nec["loss_nec"]
 
     
     def _kmeans_labels(self, X: torch.Tensor, K: int, iters: int = 10) -> torch.Tensor:
