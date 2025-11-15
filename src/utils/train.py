@@ -398,32 +398,32 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
                 f"top1={top1_share[i].item():.4f} "
                 f"({int(top1_counts[i].item())}/{total_n})")
 
-    # ---- NEW: per-basis gate usage summary ----
-    if has_basis_attr:
-        print("\nPer-basis gate usage (mean gate weight per expert):")
-        for b in sorted(per_basis_gate_sum.keys()):
-            total_count = per_basis_count[b]
-            avg_load = per_basis_gate_sum[b] / max(total_count, 1)  # (K,)
-            avg_list = avg_load.tolist()
-            pretty = " ".join(
-                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
-            )
-            print(f"  basis {b} (n={total_count}): {pretty}")
+    # # ---- NEW: per-basis gate usage summary ----
+    # if has_basis_attr:
+    #     print("\nPer-basis gate usage (mean gate weight per expert):")
+    #     for b in sorted(per_basis_gate_sum.keys()):
+    #         total_count = per_basis_count[b]
+    #         avg_load = per_basis_gate_sum[b] / max(total_count, 1)  # (K,)
+    #         avg_list = avg_load.tolist()
+    #         pretty = " ".join(
+    #             [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+    #         )
+    #         print(f"  basis {b} (n={total_count}): {pretty}")
     # --------------------------------------------
 
-    # ---- NEW: per-shift gate usage summary ----
-    if has_shift_attr:
-        print("\nPer-shift gate usage (mean gate weight per expert):")
-        for shift_name, gate_sum in per_shift_gate_sum.items():
-            count = per_shift_count[shift_name]
-            if count == 0:
-                continue
-            avg = gate_sum / count  # (K,)
-            avg_list = avg.tolist()
-            pretty = " ".join(
-                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
-            )
-            print(f"  shift '{shift_name}' (n={count}): {pretty}")
+    # # ---- NEW: per-shift gate usage summary ----
+    # if has_shift_attr:
+    #     print("\nPer-shift gate usage (mean gate weight per expert):")
+    #     for shift_name, gate_sum in per_shift_gate_sum.items():
+    #         count = per_shift_count[shift_name]
+    #         if count == 0:
+    #             continue
+    #         avg = gate_sum / count  # (K,)
+    #         avg_list = avg.tolist()
+    #         pretty = " ".join(
+    #             [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+    #         )
+    #         print(f"  shift '{shift_name}' (n={count}): {pretty}")
 
     # --------------------------------------------
  
@@ -728,120 +728,118 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     metrics = compute_metrics(final_outputs, final_targets, metric_type)
 
     # ---- NEW: concatenate motif IDs across epoch ----
-    motif_all = None
-    if has_motif_attr and len(all_motif_ids) > 0:
-        motif_all = torch.cat(all_motif_ids, dim=0)  # (N,)
-        # sanity check (optional, you can assert if you like)
-        # assert motif_all.size(0) == final_targets.size(0)
+    # motif_all = None
+    # if has_motif_attr and len(all_motif_ids) > 0:
+    #     motif_all = torch.cat(all_motif_ids, dim=0)  # (N,)
 
-    # ---- NEW: per-basis gate usage summary ----
-    if has_motif_attr:
-        print("\nPer-motif gate usage (mean gate weight per expert):")
-        for m in sorted(per_motif_gate_sum.keys()):
-            total_count = per_motif_count[m]
-            avg_load = per_motif_gate_sum[m] / max(total_count, 1)  # (K,)
-            avg_list = avg_load.tolist()
-            pretty = " ".join(
-                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
-            )
-            print(f"  motif {m} (n={total_count}): {pretty}")
-    # --------------------------------------------
+    # # ---- NEW: per-basis gate usage summary ----
+    # if has_motif_attr:
+    #     print("\nPer-motif gate usage (mean gate weight per expert):")
+    #     for m in sorted(per_motif_gate_sum.keys()):
+    #         total_count = per_motif_count[m]
+    #         avg_load = per_motif_gate_sum[m] / max(total_count, 1)  # (K,)
+    #         avg_list = avg_load.tolist()
+    #         pretty = " ".join(
+    #             [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+    #         )
+    #         print(f"  motif {m} (n={total_count}): {pretty}")
+    # # --------------------------------------------
 
-    # ---- NEW: per-shift gate usage summary ----
-    if has_shift_attr:
-        print("\nPer-shift gate usage (mean gate weight per expert):")
-        for shift_name, gate_sum in per_shift_gate_sum.items():
-            count = per_shift_count[shift_name]
-            if count == 0:
-                continue
-            avg = gate_sum / count  # (K,)
-            avg_list = avg.tolist()
-            pretty = " ".join(
-                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
-            )
-            print(f"  shift '{shift_name}' (n={count}): {pretty}")
-            metrics[f"shift_{shift_name}_gate_load"] = avg_list
+    # # ---- NEW: per-shift gate usage summary ----
+    # if has_shift_attr:
+    #     print("\nPer-shift gate usage (mean gate weight per expert):")
+    #     for shift_name, gate_sum in per_shift_gate_sum.items():
+    #         count = per_shift_count[shift_name]
+    #         if count == 0:
+    #             continue
+    #         avg = gate_sum / count  # (K,)
+    #         avg_list = avg.tolist()
+    #         pretty = " ".join(
+    #             [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+    #         )
+    #         print(f"  shift '{shift_name}' (n={count}): {pretty}")
+    #         metrics[f"shift_{shift_name}_gate_load"] = avg_list
 
     # --------------------------------------------
 
-    # --- Majority vote accuracy ---
-    mv_counts_all = torch.cat(all_mv_counts, dim=0)  # (N, C)
-    mv_metrics = compute_metrics(mv_counts_all, final_targets, metric_type)
-    print("Majority-vote metrics:", {f"mv_{k}": v for k, v in mv_metrics.items()})
-    for k, v in mv_metrics.items():
-        metrics[f"mv_{k}"] = v
+    # # --- Majority vote accuracy ---
+    # mv_counts_all = torch.cat(all_mv_counts, dim=0)  # (N, C)
+    # mv_metrics = compute_metrics(mv_counts_all, final_targets, metric_type)
+    # print("Majority-vote metrics:", {f"mv_{k}": v for k, v in mv_metrics.items()})
+    # for k, v in mv_metrics.items():
+    #     metrics[f"mv_{k}"] = v
 
-    # --- Top-1 / Top-2 metrics
-    if len(all_top1_logits) > 0:
-        top1_all = torch.cat(all_top1_logits, dim=0)  # (N, C)
-        top1_metrics = compute_metrics(top1_all, final_targets, metric_type)
-        print("Top-1-expert metrics:", {f"top1_{k}": v for k, v in top1_metrics.items()})
-        for k, v in top1_metrics.items():
-            metrics[f"top1_{k}"] = v
+    # # --- Top-1 / Top-2 metrics
+    # if len(all_top1_logits) > 0:
+    #     top1_all = torch.cat(all_top1_logits, dim=0)  # (N, C)
+    #     top1_metrics = compute_metrics(top1_all, final_targets, metric_type)
+    #     print("Top-1-expert metrics:", {f"top1_{k}": v for k, v in top1_metrics.items()})
+    #     for k, v in top1_metrics.items():
+    #         metrics[f"top1_{k}"] = v
 
-    # Only if at least 2 experts exist
-    if K >= 2 and len(all_top2u_logits) > 0 and len(all_top2w_logits) > 0:
-        top2u_all = torch.cat(all_top2u_logits, dim=0)
-        top2w_all = torch.cat(all_top2w_logits, dim=0)
+    # # Only if at least 2 experts exist
+    # if K >= 2 and len(all_top2u_logits) > 0 and len(all_top2w_logits) > 0:
+    #     top2u_all = torch.cat(all_top2u_logits, dim=0)
+    #     top2w_all = torch.cat(all_top2w_logits, dim=0)
 
-        top2u_metrics = compute_metrics(top2u_all, final_targets, metric_type)
-        top2w_metrics = compute_metrics(top2w_all, final_targets, metric_type)
+    #     top2u_metrics = compute_metrics(top2u_all, final_targets, metric_type)
+    #     top2w_metrics = compute_metrics(top2w_all, final_targets, metric_type)
 
-        print("Top-2 (unweighted) metrics:", {f"top2u_{k}": v for k, v in top2u_metrics.items()})
-        print("Top-2 (gate-weighted) metrics:", {f"top2w_{k}": v for k, v in top2w_metrics.items()})
+    #     print("Top-2 (unweighted) metrics:", {f"top2u_{k}": v for k, v in top2u_metrics.items()})
+    #     print("Top-2 (gate-weighted) metrics:", {f"top2w_{k}": v for k, v in top2w_metrics.items()})
 
-        for k, v in top2u_metrics.items():
-            metrics[f"top2u_{k}"] = v
-        for k, v in top2w_metrics.items():
-            metrics[f"top2w_{k}"] = v
+    #     for k, v in top2u_metrics.items():
+    #         metrics[f"top2u_{k}"] = v
+    #     for k, v in top2w_metrics.items():
+    #         metrics[f"top2w_{k}"] = v
 
     # ------- NEW: Per-expert metrics over the full epoch -------
     # gap_mean_avg = sum(all_gap_means) / len(loader.dataset)
     # gap_mean_std = torch.tensor(all_gap_means).std()
     # print(f"Gap Mean Average: {gap_mean_avg}, Gap Mean Std Dev: {gap_mean_std}")
     # Concatenate per-expert logits and compute metrics against final_targets
-    if per_expert_logits_accum is not None:
-        print("\nPer-expert metrics:")
-        primary_key = metric_type.lower().replace('-', '_')
+    # if per_expert_logits_accum is not None:
+    #     print("\nPer-expert metrics:")
+    #     primary_key = metric_type.lower().replace('-', '_')
 
-        for k in range(K):
-            k_all = torch.cat(per_expert_logits_accum[k], dim=0)  # (N, C)
-            k_metrics = compute_metrics(k_all, final_targets, metric_type)
+    #     for k in range(K):
+    #         k_all = torch.cat(per_expert_logits_accum[k], dim=0)  # (N, C)
+    #         k_metrics = compute_metrics(k_all, final_targets, metric_type)
 
-            # Pretty-print overall expert metrics
-            primary = k_metrics.get(primary_key, None)
-            # extra_str = " ".join([f"{kk}={vv:.4f}" for kk, vv in k_metrics.items() if kk != primary_key])
-            # if primary is not None:
-            #     print(f"  Expert {k}: {primary_key}={primary:.4f} {extra_str}")
-            # else:
-            #     print(f"  Expert {k}: {extra_str}")
+    #         # Pretty-print overall expert metrics
+    #         primary = k_metrics.get(primary_key, None)
+    #         # extra_str = " ".join([f"{kk}={vv:.4f}" for kk, vv in k_metrics.items() if kk != primary_key])
+    #         # if primary is not None:
+    #         #     print(f"  Expert {k}: {primary_key}={primary:.4f} {extra_str}")
+    #         # else:
+    #         #     print(f"  Expert {k}: {extra_str}")
 
-            # Flatten into metrics dict
-            for kk, vv in k_metrics.items():
-                metrics[f"expert{k}_{kk}"] = vv
+    #         # Flatten into metrics dict
+    #         for kk, vv in k_metrics.items():
+    #             metrics[f"expert{k}_{kk}"] = vv
 
-            # ---- NEW: per-motif metrics for this expert ----
-            if motif_all is not None:
-                unique_motifs = torch.unique(motif_all)
-                print(f"    Per-motif metrics for Expert {k}:")
-                for m in unique_motifs:
-                    mask = (motif_all == m)
-                    n_m = int(mask.sum().item())
-                    if n_m == 0:
-                        continue
+    #         # ---- NEW: per-motif metrics for this expert ----
+    #         if motif_all is not None:
+    #             unique_motifs = torch.unique(motif_all)
+    #             print(f"    Per-motif metrics for Expert {k}:")
+    #             for m in unique_motifs:
+    #                 mask = (motif_all == m)
+    #                 n_m = int(mask.sum().item())
+    #                 if n_m == 0:
+    #                     continue
 
-                    logits_m = k_all[mask]           # (n_m, C)
-                    targets_m = final_targets[mask]  # (n_m,)
+    #                 logits_m = k_all[mask]           # (n_m, C)
+    #                 targets_m = final_targets[mask]  # (n_m,)
 
-                    m_metrics = compute_metrics(logits_m, targets_m, metric_type)
-                    m_primary = m_metrics.get(primary_key, None)
-                    if m_primary is not None:
-                        print(f"      motif {int(m.item())} (n={n_m}): "
-                              f"{primary_key}={m_primary:.4f}")
+    #                 m_metrics = compute_metrics(logits_m, targets_m, metric_type)
+    #                 m_primary = m_metrics.get(primary_key, None)
+    #                 if m_primary is not None:
+    #                     print(f"      motif {int(m.item())} (n={n_m}): "
+    #                           f"{primary_key}={m_primary:.4f}")
 
-                    # Store at least the primary metric in the dict
-                    for kk, vv in m_metrics.items():
-                        metrics[f"expert{k}_motif{int(m.item())}_{kk}"] = vv
+    #                 # Store at least the primary metric in the dict
+    #                 for kk, vv in m_metrics.items():
+    #                     metrics[f"expert{k}_motif{int(m.item())}_{kk}"] = vv
 
 
     metrics['loss'] = total_loss / len(loader.dataset)
