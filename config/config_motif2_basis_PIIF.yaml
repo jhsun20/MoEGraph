@@ -22,7 +22,7 @@ dataset:
   task_type: "graph_classification"
   path: "./datasets"
   shift_type: "PIIF" # covariate, concept, no_shift, PIIF, FIIF
-  batch_size: 64
+  batch_size: 128
   num_workers: 4
   domain: 'basis' # basis or size
 
