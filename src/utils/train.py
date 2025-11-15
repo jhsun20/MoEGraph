@@ -258,6 +258,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         # ---- NEW: accumulate per-basis gate usage ----
         if has_basis_attr is None:
             has_basis_attr = hasattr(data, "basis_id")
+            has_basis_attr = False
 
         if has_basis_attr:
             basis_ids = data.basis_id  # could be tensor or scalar
@@ -288,6 +289,7 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
         # ------------------------------------------------
         if has_shift_attr is None:
             has_shift_attr = hasattr(data, "shift")
+            has_shift_attr = False
 
         if has_shift_attr:
             shift_ids = data.shift  # expected: list of strings of length B
@@ -484,6 +486,8 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
 
     gate_weight_accumulator = []
 
+    all_motif_ids = []   # list of tensors (B,) per batch
+
     # ---- NEW: per-basis gate usage accumulators ----
     has_motif_attr = None  # lazily determined from first batch
     per_motif_gate_sum = {}   # basis_id -> tensor(K,)
@@ -532,6 +536,9 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
             else:
                 # Fallback: scalar basis_id, broadcast to batch
                 motif_ids = torch.tensor([motif_ids] * batch_size)
+            
+            # --- NEW: save motif_ids for later per-expert-per-motif metrics ---
+            all_motif_ids.append(motif_ids)  # (B,)
 
             # Only proceed if we have one basis_id per graph
             if motif_ids.numel() == batch_size:
@@ -554,6 +561,7 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         # ------------------------------------------------
         if has_shift_attr is None:
             has_shift_attr = hasattr(data, "shift")
+            has_shift_attr = False
 
         if has_shift_attr:
             shift_ids = data.shift  # expected: list of strings of length B
@@ -719,6 +727,13 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     final_targets = torch.cat(all_targets, dim=0)
     metrics = compute_metrics(final_outputs, final_targets, metric_type)
 
+    # ---- NEW: concatenate motif IDs across epoch ----
+    motif_all = None
+    if has_motif_attr and len(all_motif_ids) > 0:
+        motif_all = torch.cat(all_motif_ids, dim=0)  # (N,)
+        # sanity check (optional, you can assert if you like)
+        # assert motif_all.size(0) == final_targets.size(0)
+
     # ---- NEW: per-basis gate usage summary ----
     if has_motif_attr:
         print("\nPer-motif gate usage (mean gate weight per expert):")
@@ -787,16 +802,47 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     # Concatenate per-expert logits and compute metrics against final_targets
     if per_expert_logits_accum is not None:
         print("\nPer-expert metrics:")
+        primary_key = metric_type.lower().replace('-', '_')
+
         for k in range(K):
-            k_all = torch.cat(per_expert_logits_accum[k], dim=0)  # (N, C) or (N, 1)
+            k_all = torch.cat(per_expert_logits_accum[k], dim=0)  # (N, C)
             k_metrics = compute_metrics(k_all, final_targets, metric_type)
-            # Pretty print a compact line; keep primary metric first if present
-            primary = k_metrics[metric_type.lower().replace('-', '_')]
-            print(f"  Expert {k}:" +
-                  " ".join([f"{kk}={vv:.4f}" for kk, vv in list(k_metrics.items())[1:]]))
-            # Flatten into overall metrics dict with 'expert{k}_' prefix
+
+            # Pretty-print overall expert metrics
+            primary = k_metrics.get(primary_key, None)
+            # extra_str = " ".join([f"{kk}={vv:.4f}" for kk, vv in k_metrics.items() if kk != primary_key])
+            # if primary is not None:
+            #     print(f"  Expert {k}: {primary_key}={primary:.4f} {extra_str}")
+            # else:
+            #     print(f"  Expert {k}: {extra_str}")
+
+            # Flatten into metrics dict
             for kk, vv in k_metrics.items():
                 metrics[f"expert{k}_{kk}"] = vv
+
+            # ---- NEW: per-motif metrics for this expert ----
+            if motif_all is not None:
+                unique_motifs = torch.unique(motif_all)
+                print(f"    Per-motif metrics for Expert {k}:")
+                for m in unique_motifs:
+                    mask = (motif_all == m)
+                    n_m = int(mask.sum().item())
+                    if n_m == 0:
+                        continue
+
+                    logits_m = k_all[mask]           # (n_m, C)
+                    targets_m = final_targets[mask]  # (n_m,)
+
+                    m_metrics = compute_metrics(logits_m, targets_m, metric_type)
+                    m_primary = m_metrics.get(primary_key, None)
+                    if m_primary is not None:
+                        print(f"      motif {int(m.item())} (n={n_m}): "
+                              f"{primary_key}={m_primary:.4f}")
+
+                    # Store at least the primary metric in the dict
+                    for kk, vv in m_metrics.items():
+                        metrics[f"expert{k}_motif{int(m.item())}_{kk}"] = vv
+
 
     metrics['loss'] = total_loss / len(loader.dataset)
     metrics['loss_ce'] = total_ce_loss / len(loader.dataset)
