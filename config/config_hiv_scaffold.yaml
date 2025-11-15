@@ -9,7 +9,7 @@ experiment:
     num_samples: 512
     epochs: 50
     verbose: false
-  seeds: [1, 2, 3, 4, 5]  # Add more seeds as needed
+  seeds: [1, 2]  # Add more seeds as needed
   hyper_search:
     enable: false
     n_trials_1: 10
@@ -37,9 +37,9 @@ model:
   weight_str: 0.0
   weight_la: 0.0
   weight_ea: 0.0
-  weight_reg: 1.0
+  weight_reg: 0.0
   weight_ce: 1.0
-  weight_div: 0.0
+  weight_div: 1.0
   weight_load: 0.5
   num_experts: 8
   aggregation: "weighted_mean"  # Options: mean, majority_vote, weighted_mean
