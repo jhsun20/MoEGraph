@@ -383,6 +383,10 @@ def train_epoch_moe(model, loader, optimizer, dataset_info, device, epoch, confi
     gate_weights_all = torch.cat(gate_weight_accumulator, dim=0)  # (N, K)
     load_balance = gate_weights_all.mean(dim=0)
 
+    save_dir = Path("results/tensors")
+    save_dir.mkdir(parents=True, exist_ok=True)
+    np.save(save_dir / f"gate_weights_all_epoch{epoch}.npy", gate_weights_all.detach().cpu().numpy())
+
     # --- NEW: top-1 frequency per expert across the epoch ---
     top1_idx = gate_weights_all.argmax(dim=1)                                # (N,)
     K = gate_weights_all.size(1)
@@ -706,9 +710,9 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
 
     # shapes now consistent: concat along batch dimension
     gate_weights_all = torch.cat(gate_weight_accumulator, dim=0)  # (N, K)
-    save_dir = Path("results/tensors")
-    save_dir.mkdir(parents=True, exist_ok=True)
-    np.save(save_dir / f"gate_weights_all_epoch{epoch}.npy", gate_weights_all.detach().cpu().numpy())
+    # save_dir = Path("results/tensors")
+    # save_dir.mkdir(parents=True, exist_ok=True)
+    # np.save(save_dir / f"gate_weights_all_epoch{epoch}.npy", gate_weights_all.detach().cpu().numpy())
     load_balance = gate_weights_all.mean(dim=0)
 
     # --- NEW: top-1 frequency per expert across the epoch ---

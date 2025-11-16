@@ -163,21 +163,23 @@ def load_dataset(config):
         'num_envs': meta_info.num_envs
     }
 
-    # if dataset_name == 'GOODMotif':
-    #     # for the first five graphs in the test set 
-    #     # print the original graph visually 
-    #     import matplotlib.pyplot as plt
-    #     import networkx as nx
-    #     from torch_geometric.utils import to_networkx
+    if dataset_name == 'GOODMotif':
+        # for the first five graphs in the test set 
+        # print the original graph visually 
+        import matplotlib.pyplot as plt
+        import networkx as nx
+        from torch_geometric.utils import to_networkx
 
-    #     for i in range(11, 12):
-    #         data = datasets['test'][i]
-    #         G = to_networkx(data, to_undirected=True)
-    #         plt.figure(figsize=(8, 6))
-    #         nx.draw(G, with_labels=True, node_size=500, node_color='lightblue', font_size=10, font_color='black')
-    #         plt.title(f"Graph {i+1} from Test Set")
-    #         plt.show()
-    #     [32][s]
+        for i in range(11, 21):
+            data = datasets['test'][i]
+            motif_id = data.motif_id
+            print(f"Graph {i+1} from Test Set (Motif {motif_id})")
+            G = to_networkx(data, to_undirected=True)
+            plt.figure(figsize=(8, 6))
+            nx.draw(G, with_labels=True, node_size=500, node_color='lightblue', font_size=10, font_color='black')
+            plt.title(f"Graph {i+1} from Test Set (Motif {motif_id})")
+            plt.show()
+        [32][s]
 
     
     # Improve print statements for better readability

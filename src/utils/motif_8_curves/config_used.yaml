@@ -1,0 +1,65 @@
+dataset:
+  batch_size: 128
+  dataset_name: GOODMotif
+  domain: basis
+  num_workers: 4
+  path: ./datasets
+  shift_type: covariate
+  task_type: graph_classification
+experiment:
+  debug:
+    enable: false
+    epochs: 50
+    num_samples: 512
+    verbose: false
+  device: cuda
+  hyper_search:
+    enable: false
+    n_trials_1: 10
+    n_trials_2: 5
+    test_after: true
+  name: moe_motif_basis
+  seeds:
+  - 1
+gate:
+  activation: entmax
+  depth: 3
+  entmax_alpha: 1.38
+  finetune_epochs: 5
+  hidden_dim: 64
+  train_after: 10
+logging:
+  log_interval: 10
+  save_model: true
+  wandb:
+    enable: false
+    entity: jhsun163-university-of-toronto
+    project: graph_moe_ood
+model:
+  adv_ramp_epochs: 5
+  adv_warmup_epochs: 30
+  aggregation: weighted_mean
+  dropout: 0.5
+  global_pooling: mean
+  hidden_dim: 300
+  num_experts: 8
+  num_layers: 3
+  parallel: false
+  rho_edge: 0.55
+  strinv_ramp_epochs: 5
+  strinv_warmup_epochs: 5
+  type: moe
+  weight_ce: 1.0
+  weight_div: 1.0
+  weight_ea: 0.0
+  weight_la: 0.0
+  weight_load: 0.5
+  weight_reg: 1.0
+  weight_str: 0.0
+training:
+  early_stopping:
+    min_delta: 0.001
+    patience: 20
+  epochs: 25
+  lr: 0.001
+  weight_decay: 0.0001
