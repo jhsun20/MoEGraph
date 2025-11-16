@@ -936,6 +936,9 @@ def train(config, trial=None):
     all_train_metrics = []
     all_val_ood_metrics = []
     all_val_id_metrics = []
+    saved_metrics_train = []
+    saved_metrics_val = []
+    saved_metrics_id_val = []
 
     # Iterate over each seed
     for seed in config['experiment']['seeds']:
@@ -1061,7 +1064,15 @@ def train(config, trial=None):
             # Early stopping based on OOD validation performance
             # Use the appropriate metric for early stopping
             eval_metric = 'accuracy' if metric_type == 'Accuracy' else metric_type.lower().replace('-', '_')
-            
+
+            temp_train = [train_metrics[eval_metric], train_metrics['loss'], train_metrics['loss_ce'], train_metrics['loss_div'], train_metrics['loss_gate'], train_metrics['loss_reg']]
+            saved_metrics_train.append(temp_train)
+            temp_val = [val_metrics[eval_metric], val_metrics['loss'], val_metrics['loss_ce'], val_metrics['loss_div'], val_metrics['loss_gate'], val_metrics['loss_reg']]
+            saved_metrics_val.append(temp_val)
+            temp_id_val = [id_val_metrics[eval_metric], id_val_metrics['loss'], id_val_metrics['loss_ce'], id_val_metrics['loss_div'], id_val_metrics['loss_gate'], id_val_metrics['loss_reg']]
+            saved_metrics_id_val.append(temp_id_val)
+
+
             # print(f"val_metrics: {val_metrics}")
             if primary_metric not in val_metrics:
                 primary_metric = list(val_metrics.keys())[0]  # Fallback to first metric
@@ -1097,6 +1108,7 @@ def train(config, trial=None):
                     # Reset patience after a decay so we wait for next window
                     patience_counter = 0
         
+
         #if is_tuning:
         if False:
             del optimizer
@@ -1200,6 +1212,14 @@ def train(config, trial=None):
             'test_id': all_test_id_metrics,
             'avg_test_ood_primary_metric': avg_test_ood_primary_metric,
             'avg_test_id_primary_metric': avg_test_id_primary_metric
+        }, f)
+    
+    epochs_path = os.path.join(results_dir, "epochs_metrics.yaml")
+    with open(epochs_path, 'w') as f:
+        yaml.dump({
+            'train': saved_metrics_train,
+            'val': saved_metrics_val,
+            'id_val': saved_metrics_id_val
         }, f)
     
     logger.logger.info(f"Results saved to {results_path}")
