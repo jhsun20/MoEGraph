@@ -741,16 +741,16 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
         motif_all = torch.cat(all_motif_ids, dim=0)  # (N,)
 
     # ---- NEW: per-basis gate usage summary ----
-    if has_motif_attr:
-        print("\nPer-motif gate usage (mean gate weight per expert):")
-        for m in sorted(per_motif_gate_sum.keys()):
-            total_count = per_motif_count[m]
-            avg_load = per_motif_gate_sum[m] / max(total_count, 1)  # (K,)
-            avg_list = avg_load.tolist()
-            pretty = " ".join(
-                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
-            )
-            print(f"  motif {m} (n={total_count}): {pretty}")
+    # if has_motif_attr:
+    #     print("\nPer-motif gate usage (mean gate weight per expert):")
+    #     for m in sorted(per_motif_gate_sum.keys()):
+    #         total_count = per_motif_count[m]
+    #         avg_load = per_motif_gate_sum[m] / max(total_count, 1)  # (K,)
+    #         avg_list = avg_load.tolist()
+    #         pretty = " ".join(
+    #             [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+    #         )
+    #         print(f"  motif {m} (n={total_count}): {pretty}")
     # --------------------------------------------
 
     # # ---- NEW: per-shift gate usage summary ----
@@ -802,52 +802,52 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     #         metrics[f"top2w_{k}"] = v
 
     # ------- NEW: Per-expert metrics over the full epoch -------
-    gap_mean_avg = sum(all_gap_means) / len(loader.dataset)
-    gap_mean_std = torch.tensor(all_gap_means).std()
-    print(f"Gap Mean Average: {gap_mean_avg}, Gap Mean Std Dev: {gap_mean_std}")
+    # gap_mean_avg = sum(all_gap_means) / len(loader.dataset)
+    # gap_mean_std = torch.tensor(all_gap_means).std()
+    # print(f"Gap Mean Average: {gap_mean_avg}, Gap Mean Std Dev: {gap_mean_std}")
     # Concatenate per-expert logits and compute metrics against final_targets
-    if per_expert_logits_accum is not None:
-        print("\nPer-expert metrics:")
-        primary_key = metric_type.lower().replace('-', '_')
+    # if per_expert_logits_accum is not None:
+    #     print("\nPer-expert metrics:")
+    #     primary_key = metric_type.lower().replace('-', '_')
 
-        for k in range(K):
-            k_all = torch.cat(per_expert_logits_accum[k], dim=0)  # (N, C)
-            k_metrics = compute_metrics(k_all, final_targets, metric_type)
+    #     for k in range(K):
+    #         k_all = torch.cat(per_expert_logits_accum[k], dim=0)  # (N, C)
+    #         k_metrics = compute_metrics(k_all, final_targets, metric_type)
 
-            # Pretty-print overall expert metrics
-            primary = k_metrics.get(primary_key, None)
-            # extra_str = " ".join([f"{kk}={vv:.4f}" for kk, vv in k_metrics.items() if kk != primary_key])
-            # if primary is not None:
-            #     print(f"  Expert {k}: {primary_key}={primary:.4f} {extra_str}")
-            # else:
-            #     print(f"  Expert {k}: {extra_str}")
+    #         # Pretty-print overall expert metrics
+    #         primary = k_metrics.get(primary_key, None)
+    #         # extra_str = " ".join([f"{kk}={vv:.4f}" for kk, vv in k_metrics.items() if kk != primary_key])
+    #         # if primary is not None:
+    #         #     print(f"  Expert {k}: {primary_key}={primary:.4f} {extra_str}")
+    #         # else:
+    #         #     print(f"  Expert {k}: {extra_str}")
 
-            # Flatten into metrics dict
-            for kk, vv in k_metrics.items():
-                metrics[f"expert{k}_{kk}"] = vv
+    #         # Flatten into metrics dict
+    #         for kk, vv in k_metrics.items():
+    #             metrics[f"expert{k}_{kk}"] = vv
 
-            # ---- NEW: per-motif metrics for this expert ----
-            if motif_all is not None:
-                unique_motifs = torch.unique(motif_all)
-                print(f"    Per-motif metrics for Expert {k}:")
-                for m in unique_motifs:
-                    mask = (motif_all == m)
-                    n_m = int(mask.sum().item())
-                    if n_m == 0:
-                        continue
+    #         # ---- NEW: per-motif metrics for this expert ----
+    #         if motif_all is not None:
+    #             unique_motifs = torch.unique(motif_all)
+    #             print(f"    Per-motif metrics for Expert {k}:")
+    #             for m in unique_motifs:
+    #                 mask = (motif_all == m)
+    #                 n_m = int(mask.sum().item())
+    #                 if n_m == 0:
+    #                     continue
 
-                    logits_m = k_all[mask]           # (n_m, C)
-                    targets_m = final_targets[mask]  # (n_m,)
+    #                 logits_m = k_all[mask]           # (n_m, C)
+    #                 targets_m = final_targets[mask]  # (n_m,)
 
-                    m_metrics = compute_metrics(logits_m, targets_m, metric_type)
-                    m_primary = m_metrics.get(primary_key, None)
-                    if m_primary is not None:
-                        print(f"      motif {int(m.item())} (n={n_m}): "
-                              f"{primary_key}={m_primary:.4f}")
+    #                 m_metrics = compute_metrics(logits_m, targets_m, metric_type)
+    #                 m_primary = m_metrics.get(primary_key, None)
+    #                 if m_primary is not None:
+    #                     print(f"      motif {int(m.item())} (n={n_m}): "
+    #                           f"{primary_key}={m_primary:.4f}")
 
-                    # Store at least the primary metric in the dict
-                    for kk, vv in m_metrics.items():
-                        metrics[f"expert{k}_motif{int(m.item())}_{kk}"] = vv
+    #                 # Store at least the primary metric in the dict
+    #                 for kk, vv in m_metrics.items():
+    #                     metrics[f"expert{k}_motif{int(m.item())}_{kk}"] = vv
 
 
     metrics['loss'] = total_loss / len(loader.dataset)
