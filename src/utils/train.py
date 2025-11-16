@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 import argparse
+from pathlib import Path
 import datetime
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -705,6 +706,9 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
 
     # shapes now consistent: concat along batch dimension
     gate_weights_all = torch.cat(gate_weight_accumulator, dim=0)  # (N, K)
+    save_dir = Path("results/tensors")
+    save_dir.mkdir(parents=True, exist_ok=True)
+    np.save(save_dir / f"gate_weights_all_epoch{epoch}.npy", gate_weights_all.detach().cpu().numpy())
     load_balance = gate_weights_all.mean(dim=0)
 
     # --- NEW: top-1 frequency per expert across the epoch ---
@@ -728,22 +732,22 @@ def evaluate_moe(model, loader, device, metric_type, epoch, config):
     metrics = compute_metrics(final_outputs, final_targets, metric_type)
 
     # ---- NEW: concatenate motif IDs across epoch ----
-    # motif_all = None
-    # if has_motif_attr and len(all_motif_ids) > 0:
-    #     motif_all = torch.cat(all_motif_ids, dim=0)  # (N,)
+    motif_all = None
+    if has_motif_attr and len(all_motif_ids) > 0:
+        motif_all = torch.cat(all_motif_ids, dim=0)  # (N,)
 
-    # # ---- NEW: per-basis gate usage summary ----
-    # if has_motif_attr:
-    #     print("\nPer-motif gate usage (mean gate weight per expert):")
-    #     for m in sorted(per_motif_gate_sum.keys()):
-    #         total_count = per_motif_count[m]
-    #         avg_load = per_motif_gate_sum[m] / max(total_count, 1)  # (K,)
-    #         avg_list = avg_load.tolist()
-    #         pretty = " ".join(
-    #             [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
-    #         )
-    #         print(f"  motif {m} (n={total_count}): {pretty}")
-    # # --------------------------------------------
+    # ---- NEW: per-basis gate usage summary ----
+    if has_motif_attr:
+        print("\nPer-motif gate usage (mean gate weight per expert):")
+        for m in sorted(per_motif_gate_sum.keys()):
+            total_count = per_motif_count[m]
+            avg_load = per_motif_gate_sum[m] / max(total_count, 1)  # (K,)
+            avg_list = avg_load.tolist()
+            pretty = " ".join(
+                [f"e{k}={v:.4f}" for k, v in enumerate(avg_list)]
+            )
+            print(f"  motif {m} (n={total_count}): {pretty}")
+    # --------------------------------------------
 
     # # ---- NEW: per-shift gate usage summary ----
     # if has_shift_attr:
